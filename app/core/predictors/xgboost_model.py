@@ -1,10 +1,20 @@
-class XGBoostPredictor:
-    def __init__(self, params=None):
-        import xgboost as xgb
-        self.model = xgb.XGBRegressor(**(params if params else {}))
+from xgboost import XGBRegressor
+from sklearn.base import BaseEstimator, RegressorMixin
 
-    def train(self, X_train, y_train):
-        self.model.fit(X_train, y_train)
+class XGBoostPredictor(BaseEstimator, RegressorMixin):
+    def __init__(self, **kwargs):
+        self.model = XGBRegressor(**kwargs)
 
-    def predict(self, X_test):
-        return self.model.predict(X_test)
+    def fit(self, X, y, **fit_params):
+        self.model.fit(X, y, **fit_params)
+        return self
+
+    def predict(self, X):
+        return self.model.predict(X)
+
+    def get_params(self, deep=True):
+        return self.model.get_params(deep)
+
+    def set_params(self, **params):
+        self.model.set_params(**params)
+        return self

@@ -7,3 +7,6 @@ app/data/__pycache__
 app/data/collectors/__pycache__
 app/data/preprocessors/__pycache__
 app/models_cache/
+app/core/training/__pycache__
+app/core/adapters/__pycache__
+app/core/utils/__pycache__
