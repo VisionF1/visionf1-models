@@ -15,6 +15,7 @@ class SimplePositionPredictor:
         self.trained_model = None
         self.label_encoder = None
         self.scaler = None
+        self.adjustments = {}  # Añadido para evitar el error de atributo
         
     def load_best_model(self):
         """Carga el mejor modelo basado en métricas de rendimiento"""

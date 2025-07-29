@@ -35,8 +35,9 @@ class Pipeline:
             self._save_cached_data()
         
         # 2. Validar tamaño del dataset
-        if len(self.data) < 30:
-            print(f"⚠️  ADVERTENCIA: Dataset pequeño ({len(self.data)} muestras)")
+        if self.data is None or len(self.data) < 30:
+            data_len = len(self.data) if self.data is not None else 0
+            print(f"⚠️  ADVERTENCIA: Dataset pequeño ({data_len} muestras)")
             print(f"   💡 Considera recolectar más datos para evitar overfitting")
         
         # 3. Preparar datos para entrenamiento

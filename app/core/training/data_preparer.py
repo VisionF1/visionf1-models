@@ -49,7 +49,10 @@ class DataPreparer:
             X_final, y_final, test_size=0.2, random_state=42
         )
         
-        self.feature_names = list(X_final.columns)
+        if X_final is not None:
+            self.feature_names = list(X_final.columns)
+        else:
+            self.feature_names = []
         
         print(f"✅ Datos preparados: {X_train.shape[0]} entrenamiento, {X_test.shape[0]} test")
         print(f"📊 Total características: {len(self.feature_names)}")
