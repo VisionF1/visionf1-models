@@ -1,5 +1,6 @@
 import pickle
 import os
+import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.model_selection import cross_val_score, GridSearchCV, TimeSeriesSplit, KFold
 import numpy as np
@@ -130,7 +131,14 @@ class ModelTrainer:
                         verbose=0
                     )
 
+                print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
+                combinations = self._get_param_combinations(model_config['param_grid'])
+                print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
                 grid_search.fit(X_train, y_train)  # Sin fit_params para XGBoost
+                
+                # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
+                self._show_hyperparameter_search_details(grid_search, name)
+                
                 best_model = grid_search.best_estimator_
                 best_params = grid_search.best_params_
 
@@ -186,6 +194,91 @@ class ModelTrainer:
         except Exception as e:
             print(f"❌ Error entrenando {name}: {e}")
             self.results[name] = {'error': str(e)}
+
+    def _get_param_combinations(self, param_grid):
+        """Calcula el número total de combinaciones de hiperparámetros"""
+        total = 1
+        for param_values in param_grid.values():
+            if isinstance(param_values, (list, tuple)):
+                total *= len(param_values)
+            else:
+                total *= 1  # Si es un valor único
+        return total
+
+    def _show_hyperparameter_search_details(self, grid_search, model_name):
+        """Muestra detalles detallados de la búsqueda de hiperparámetros"""
+        print(f"\n🔬 ANÁLISIS DETALLADO DE HIPERPARÁMETROS - {model_name}")
+        print("-" * 60)
+        
+        # Obtener todos los resultados
+        results_df = pd.DataFrame(grid_search.cv_results_)
+        
+        # Mostrar top 5 mejores combinaciones
+        top_results = results_df.nlargest(5, 'mean_test_score')
+        
+        print(f"🏆 TOP 5 MEJORES COMBINACIONES:")
+        for i, (idx, row) in enumerate(top_results.iterrows(), 1):
+            score = -row['mean_test_score']  # Convertir de negativo
+            std = row['std_test_score']
+            params = row['params']
+            
+            print(f"\n   {i}. Score: {score:.4f} (±{std:.4f})")
+            print(f"      Parámetros: {params}")
+        
+        # Mostrar estadísticas generales
+        all_scores = -results_df['mean_test_score']
+        print(f"\n📊 ESTADÍSTICAS DE LA BÚSQUEDA:")
+        print(f"   🎯 Mejor score: {all_scores.min():.4f}")
+        print(f"   📈 Score promedio: {all_scores.mean():.4f}")
+        print(f"   📉 Peor score: {all_scores.max():.4f}")
+        print(f"   📏 Desviación estándar: {all_scores.std():.4f}")
+        print(f"   🔄 Mejora vs promedio: {((all_scores.mean() - all_scores.min()) / all_scores.mean() * 100):.1f}%")
+        
+        # Analizar importancia de parámetros
+        self._analyze_parameter_importance(results_df, model_name)
+
+    def _analyze_parameter_importance(self, results_df, model_name):
+        """Analiza qué parámetros tienen más impacto en el rendimiento"""
+        print(f"\n🔍 ANÁLISIS DE IMPORTANCIA DE PARÁMETROS:")
+        
+        # Convertir params a columnas separadas
+        param_columns = {}
+        for idx, row in results_df.iterrows():
+            for param, value in row['params'].items():
+                if param not in param_columns:
+                    param_columns[param] = []
+                param_columns[param].append(value)
+        
+        scores = -results_df['mean_test_score']  # Convertir de negativo
+        
+        # Analizar cada parámetro
+        for param_name, param_values in param_columns.items():
+            unique_values = list(set(param_values))
+            if len(unique_values) > 1:  # Solo analizar si hay variación
+                print(f"\n   📊 {param_name}:")
+                
+                param_scores = {}
+                for value in unique_values:
+                    mask = [v == value for v in param_values]
+                    value_scores = scores[mask]
+                    if len(value_scores) > 0:
+                        param_scores[value] = {
+                            'mean': value_scores.mean(),
+                            'std': value_scores.std(),
+                            'count': len(value_scores)
+                        }
+                
+                # Ordenar por score promedio
+                sorted_params = sorted(param_scores.items(), key=lambda x: x[1]['mean'])
+                
+                for value, stats in sorted_params:
+                    print(f"      {value}: {stats['mean']:.4f} (±{stats['std']:.4f}) [{stats['count']} pruebas]")
+                
+                # Mostrar el mejor valor para este parámetro
+                best_value = sorted_params[0][0]
+                worst_value = sorted_params[-1][0]
+                improvement = sorted_params[-1][1]['mean'] - sorted_params[0][1]['mean']
+                print(f"      ✅ Mejor: {best_value} | ❌ Peor: {worst_value} | 📈 Diferencia: {improvement:.4f}")
 
     def _calculate_overfitting_score(self, train_mse, test_mse):
         if train_mse == 0:
