@@ -27,52 +27,52 @@ DATA_IMPORTANCE = {
     "2022_weight": 0.10,  # 10% importancia a datos de 2022
 
     "ml_vs_config": {
-        "ml_weight": 0.50,     # 50% modelo ML (histórico)
-        "config_weight": 0.50   # 50% configuración 2025 (actual)
+        "ml_weight": 0.80,     # 80% modelo ML (histórico) - MÁS LIBERTAD
+        "config_weight": 0.20   # 20% configuración 2025 (actual) - MENOS RESTRICCIÓN
     }
 }
 
-# Solo pilotos activos 2025
+# Solo pilotos activos 2025 - SIN TIERS HARDCODEADOS
 DRIVERS_2025 = {
-    # McLaren - DOMINANTE 🏆
-    "NOR": {"team": "McLaren", "tier": 1, "expected_range": (1, 4)},
-    "PIA": {"team": "McLaren", "tier": 1, "expected_range": (1, 6)},
+    # McLaren 🏆
+    "NOR": {"team": "McLaren", "expected_range": (1, 4)},
+    "PIA": {"team": "McLaren", "expected_range": (1, 6)},
     
-    # Ferrari - TOP 🥈  
-    "LEC": {"team": "Ferrari", "tier": 2, "expected_range": (2, 8)},
-    "HAM": {"team": "Ferrari", "tier": 2, "expected_range": (3, 10), "team_change": True},
+    # Ferrari 🥈  
+    "LEC": {"team": "Ferrari", "expected_range": (2, 8)},
+    "HAM": {"team": "Ferrari", "expected_range": (3, 10), "team_change": True},
     
-    # Red Bull - TOP 🥈
-    "VER": {"team": "Red Bull Racing", "tier": 2, "expected_range": (1, 6)},
-    "TSU": {"team": "Red Bull Racing", "tier": 2, "expected_range": (8, 15), "team_change": True},
+    # Red Bull 🥈
+    "VER": {"team": "Red Bull Racing", "expected_range": (1, 6)},
+    "TSU": {"team": "Red Bull Racing", "expected_range": (8, 15), "team_change": True},
     
-    # Mercedes - COMPETITIVO 🥉
-    "RUS": {"team": "Mercedes", "tier": 2, "expected_range": (4, 10)},
-    "ANT": {"team": "Mercedes", "tier": 2, "expected_range": (10, 16), "rookie": True},
+    # Mercedes 🥉
+    "RUS": {"team": "Mercedes", "expected_range": (4, 10)},
+    "ANT": {"team": "Mercedes", "expected_range": (10, 16), "rookie": True},
     
-    # Williams - MEJORÓ 📈
-    "ALB": {"team": "Williams", "tier": 3, "expected_range": (8, 14)},
-    "SAI": {"team": "Williams", "tier": 3, "expected_range": (10, 16), "team_change": True},
+    # Williams 📈
+    "ALB": {"team": "Williams", "expected_range": (8, 14)},
+    "SAI": {"team": "Williams", "expected_range": (10, 16), "team_change": True},
     
-    # Racing Bulls - MIDFIELD 
-    "HAD": {"team": "Racing Bulls", "tier": 3, "expected_range": (12, 18), "rookie": True},
-    "LAW": {"team": "Racing Bulls", "tier": 3, "expected_range": (14, 20), "rookie": True},
+    # Racing Bulls
+    "HAD": {"team": "Racing Bulls", "expected_range": (12, 18), "rookie": True},
+    "LAW": {"team": "Racing Bulls", "expected_range": (14, 20), "rookie": True},
     
-    # Aston Martin - BAJÓ 📉
-    "ALO": {"team": "Aston Martin", "tier": 4, "expected_range": (8, 16)},
-    "STR": {"team": "Aston Martin", "tier": 4, "expected_range": (12, 18)},
+    # Aston Martin 📉
+    "ALO": {"team": "Aston Martin", "expected_range": (8, 16)},
+    "STR": {"team": "Aston Martin", "expected_range": (12, 18)},
     
-    # Haas - MIDFIELD BAJO
-    "OCO": {"team": "Haas", "tier": 4, "expected_range": (10, 18), "team_change": True},
-    "BEA": {"team": "Haas", "tier": 4, "expected_range": (15, 20), "rookie": True},
+    # Haas
+    "OCO": {"team": "Haas", "expected_range": (10, 18), "team_change": True},
+    "BEA": {"team": "Haas", "expected_range": (15, 20), "rookie": True},
     
-    # Alpine - BACKMARKERS 🔻
-    "GAS": {"team": "Alpine", "tier": 5, "expected_range": (12, 20)},
-    "COL": {"team": "Alpine", "tier": 5, "expected_range": (14, 20), "team_change": True},
+    # Alpine 🔻
+    "GAS": {"team": "Alpine", "expected_range": (12, 20)},
+    "COL": {"team": "Alpine", "expected_range": (14, 20), "team_change": True},
     
-    # Sauber - BACKMARKERS 🔻
-    "HUL": {"team": "Sauber", "tier": 5, "expected_range": (14, 20)},
-    "BOR": {"team": "Sauber", "tier": 5, "expected_range": (16, 20), "rookie": True}
+    # Sauber 🔻
+    "HUL": {"team": "Sauber", "expected_range": (14, 20)},
+    "BOR": {"team": "Sauber", "expected_range": (16, 20), "rookie": True}
 }
 
 # 🔥 PENALIZACIONES SIMPLES

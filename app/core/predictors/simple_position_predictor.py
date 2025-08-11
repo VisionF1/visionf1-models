@@ -188,7 +188,7 @@ class SimplePositionPredictor:
                 # 2. Predecir con el modelo ML
                 if model_loaded and self.trained_model is not None and ml_features is not None:
                     ml_prediction = self.trained_model.predict([ml_features])[0]
-                    ml_position = self._convert_ml_to_position(ml_prediction, config["tier"])
+                    ml_position = self._convert_ml_to_position(ml_prediction)  # Sin tier hardcodeado
                 else:
                     ml_position = None
                 
@@ -223,7 +223,6 @@ class SimplePositionPredictor:
                 predictions.append({
                     'driver': driver,
                     'team': config["team"],
-                    'tier': config["tier"],
                     'predicted_position': predicted_position,
                     'ml_position': ml_position,
                     'config_position': config_position,
@@ -241,7 +240,6 @@ class SimplePositionPredictor:
                 predictions.append({
                     'driver': driver,
                     'team': config["team"],
-                    'tier': config["tier"],
                     'predicted_position': max(1, min(20, base_position)),
                     'ml_position': None,
                     'config_position': base_position,
@@ -270,29 +268,42 @@ class SimplePositionPredictor:
         return df
     
     def _create_ml_features(self, driver, config):
-        """Crea características para el modelo ML basadas en el piloto y equipo"""
+        """Crea características para el modelo ML basadas en datos REALES"""
         try:
-            # Si tenemos label encoder, intentar codificar el piloto
+            # 1. Driver encoded
             if self.label_encoder is not None:
                 try:
                     driver_encoded = self.label_encoder.transform([driver])[0]
                 except:
-                    # Si el piloto no existe en el encoder, usar valor medio
                     driver_encoded = len(self.label_encoder.classes_) // 2
             else:
-                # Codificación simple basada en hash del nombre
                 driver_encoded = hash(driver) % 100
             
-            # Estimar características basadas en el tier del equipo
-            tier_features = self._get_tier_features(config["tier"])
+            # 2. Team encoded (nuevo)
+            team_encoded = hash(config["team"]) % 20  # Simple encoding del equipo
             
-            # Crear vector con EXACTAMENTE 5 características como espera el modelo
+            # 3-5. Team historical performance (REAL DATA)
+            team_avg_2024 = self._get_team_real_performance(config["team"], 2024)
+            team_avg_2023 = self._get_team_real_performance(config["team"], 2023) 
+            team_avg_2022 = self._get_team_real_performance(config["team"], 2022)
+            
+            # 6. Clean air pace individual (estimado)
+            clean_air_pace = self._estimate_driver_pace(driver, config)
+            
+            # 7-8. Sector times básicos
+            sector1_time = clean_air_pace * 0.30
+            sector2_time = clean_air_pace * 0.40
+            
+            # Crear vector con las nuevas características
             features = [
-                driver_encoded,              # Feature 1: driver_encoded
-                tier_features['clean_air_pace'],  # Feature 2: clean_air_pace  
-                tier_features['sector1_time'],    # Feature 3: sector1_time
-                tier_features['sector2_time'],    # Feature 4: sector2_time
-                tier_features['sector3_time']     # Feature 5: sector3_time
+                driver_encoded,     # Feature 1: driver_encoded  
+                team_encoded,       # Feature 2: team_encoded (NUEVO)
+                team_avg_2024,      # Feature 3: team_avg_position_2024 (REAL)
+                team_avg_2023,      # Feature 4: team_avg_position_2023 (REAL)
+                team_avg_2022,      # Feature 5: team_avg_position_2022 (REAL)
+                clean_air_pace,     # Feature 6: clean_air_pace
+                sector1_time,       # Feature 7: sector1_time
+                sector2_time        # Feature 8: sector2_time
             ]
                     
             # Aplicar scaler si existe
@@ -354,27 +365,124 @@ class SimplePositionPredictor:
             for key, value in base_data.items()
         }
     
-    def _convert_ml_to_position(self, ml_prediction, tier):
-        """Convierte la predicción ML a posición estimada"""
-        # Asumiendo que el modelo predice tiempo de vuelta
-        # Convertir tiempo a posición aproximada considerando el tier
+    def _get_team_real_performance(self, team, year):
+        """Obtiene el rendimiento histórico REAL del equipo para un año específico"""
+        try:
+            import os
+            import pickle
+            import pandas as pd
+            from app.core.utils.team_mapping_utils import quick_team_mapping
+            
+            cache_dir = "app/models_cache/raw_data"
+            team_positions = []
+            
+            # Buscar archivos de datos del año específico
+            if os.path.exists(cache_dir):
+                for filename in os.listdir(cache_dir):
+                    if str(year) in filename and filename.endswith('.pkl'):
+                        try:
+                            filepath = os.path.join(cache_dir, filename)
+                            with open(filepath, 'rb') as f:
+                                race_data = pickle.load(f)
+                            
+                            # Convertir a DataFrame y aplicar mapeo de equipos
+                            temp_data = []
+                            for driver, driver_data in race_data.items():
+                                if 'team' in driver_data and 'race_position' in driver_data:
+                                    temp_data.append({
+                                        'driver': driver,
+                                        'team': driver_data['team'],
+                                        'race_position': driver_data['race_position']
+                                    })
+                            
+                            if temp_data:
+                                temp_df = pd.DataFrame(temp_data)
+                                # 🔧 APLICAR MAPEO DE EQUIPOS A DATOS HISTÓRICOS
+                                temp_df = quick_team_mapping(temp_df)
+                                
+                                # Extraer posiciones del equipo (ya mapeado)
+                                team_data = temp_df[temp_df['team'] == team]
+                                for _, row in team_data.iterrows():
+                                    position = row['race_position']
+                                    if isinstance(position, (int, float)) and not pd.isna(position):
+                                        team_positions.append(position)
+                                        
+                        except Exception:
+                            continue
+            
+            # Retornar promedio o valor por defecto
+            if team_positions:
+                return np.mean(team_positions)
+            else:
+                # Fallback basado en conocimiento general del equipo
+                team_defaults = {
+                    'McLaren': 6.5, 'Ferrari': 7.0, 'Red Bull Racing': 4.5,
+                    'Mercedes': 8.0, 'Alpine': 12.0, 'Aston Martin': 11.0,
+                    'Williams': 13.5, 'Racing Bulls': 14.0, 'Haas': 15.0, 'Sauber': 16.5
+                }
+                return team_defaults.get(team, 10.5)
+                
+        except Exception as e:
+            return 10.5  # Posición media por defecto
+    
+    def _estimate_driver_pace(self, driver, config):
+        """Estima el pace individual del piloto SIN usar tiers"""
+        # Base pace por equipo (datos aproximados realistas)
+        team_base_pace = {
+            'McLaren': 79.0,
+            'Ferrari': 79.3,
+            'Red Bull Racing': 79.2,
+            'Mercedes': 79.7,
+            'Williams': 80.2,
+            'Racing Bulls': 80.4,
+            'Aston Martin': 80.6,
+            'Haas': 80.8,
+            'Alpine': 81.1,
+            'Sauber': 81.4
+        }
         
-        if ml_prediction < 79:
-            base_position = random.uniform(1, 4)
-        elif ml_prediction < 80:
-            base_position = random.uniform(3, 8)
-        elif ml_prediction < 81:
-            base_position = random.uniform(6, 12)
-        elif ml_prediction < 82:
-            base_position = random.uniform(10, 16)
+        base_pace = team_base_pace.get(config.get("team", "McLaren"), 80.0)
+        
+        # Ajustes individuales conocidos (datos reales)
+        driver_adjustments = {
+            'VER': -0.3, 'HAM': -0.2, 'LEC': -0.2, 'NOR': -0.1,
+            'RUS': 0.0, 'PIA': 0.0, 'ALO': -0.1, 'SAI': 0.1,
+            'ALB': 0.2, 'GAS': 0.1, 'OCO': 0.2, 'HUL': 0.3,
+            'TSU': 0.4, 'STR': 0.3, 'ANT': 0.5, 'BEA': 0.6,
+            'LAW': 0.7, 'HAD': 0.6, 'COL': 0.4, 'BOR': 0.8
+        }
+        
+        adjustment = driver_adjustments.get(driver, 0.0)
+        return base_pace + adjustment
+    
+    def _convert_ml_to_position(self, ml_prediction, tier=None):
+        """Convierte la predicción ML a posición estimada SIN ajustes hardcodeados"""
+        # El modelo ahora debería predecir posiciones directamente
+        # O si predice tiempo, convertir de manera más neutral
+        
+        if isinstance(ml_prediction, (int, float)):
+            # Si el modelo predice tiempo de vuelta
+            if ml_prediction > 70:  # Parece tiempo de vuelta
+                if ml_prediction < 79:
+                    base_position = random.uniform(1, 4)
+                elif ml_prediction < 80:
+                    base_position = random.uniform(3, 8)
+                elif ml_prediction < 81:
+                    base_position = random.uniform(6, 12)
+                elif ml_prediction < 82:
+                    base_position = random.uniform(10, 16)
+                else:
+                    base_position = random.uniform(14, 20)
+            else:
+                # Si el modelo predice posición directamente
+                base_position = max(1, min(20, ml_prediction))
         else:
-            base_position = random.uniform(14, 20)
+            base_position = 10  # Default
         
-        # Ajustar por tier del equipo
-        tier_adjustment = {1: -1, 2: 0, 3: 0, 4: +1, 5: +2}
-        adjusted_position = base_position + tier_adjustment.get(tier, 0)
+        # YA NO usar tier adjustments - dejar que el modelo aprenda naturalmente
+        # El modelo ahora tiene información real del equipo vía las features
         
-        return max(1, min(20, adjusted_position))
+        return max(1, min(20, base_position))
     
     def _predict_basic_method(self, current_race_number):
         """Método básico cuando no hay modelo ML disponible"""
@@ -395,7 +503,6 @@ class SimplePositionPredictor:
             predictions.append({
                 'driver': driver,
                 'team': config["team"],
-                'tier': config["tier"],
                 'predicted_position': max(1, min(20, predicted_position)),
                 'ml_position': None,
                 'config_position': base_position,
@@ -427,13 +534,13 @@ class SimplePositionPredictor:
         print(f"🏆 PREDICCIONES ML + CONFIGURACIÓN 2025 - CARRERA #{current_race_name}")
         print(f"{'='*100}")
         
-        print(f"{'Pos':<4} {'Piloto':<6} {'Equipo':<16} {'Tier':<5} {'Tipo':<15} {'Fuente':<12} {'Conf.'}")
+        print(f"{'Pos':<4} {'Piloto':<6} {'Equipo':<16} {'Tipo':<15} {'Fuente':<12} {'Conf.'}")
         print("-" * 100)
         
         for _, row in predictions_df.iterrows():
             source = row.get('prediction_source', '📊 Config')
             
-            print(f"P{row['final_position']:<3} {row['driver']:<6} {row['team']:<16} T{row['tier']:<4} "
+            print(f"P{row['final_position']:<3} {row['driver']:<6} {row['team']:<16} "
                   f"{row['driver_type']:<15} {source:<12} {row['confidence']:.0f}%")
         
         # Mostrar estadísticas de fuentes de predicción
