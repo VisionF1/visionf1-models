@@ -232,6 +232,83 @@ class F1DataExplorer:
                     if self.data[col].dtype in [np.number, 'float64', 'int64']:
                         print(f"   {col}: min={self.data[col].min():.3f}, max={self.data[col].max():.3f}, media={self.data[col].mean():.3f}")
     
+    def analyze_unique_entities(self):
+        """Analiza entidades únicas: pilotos, equipos y circuitos"""
+        print("\n🏎️  ANÁLISIS DE ENTIDADES ÚNICAS")
+        print("=" * 60)
+        
+        # Análisis de pilotos
+        if 'driver' in self.data.columns:
+            unique_drivers = sorted(self.data['driver'].dropna().unique())
+            print(f"🏆 PILOTOS ÚNICOS ({len(unique_drivers)}):")
+            for i, driver in enumerate(unique_drivers, 1):
+                # Obtener años en que aparece cada piloto
+                driver_years = sorted(self.data[self.data['driver'] == driver]['year'].unique()) if 'year' in self.data.columns else []
+                years_str = ' - '.join(map(str, driver_years))
+                
+                print(f"   {i:2d}. {driver} {years_str}")
+        else:
+            print("❌ No se encontró columna 'driver'")
+        
+        # Análisis de equipos
+        if 'team' in self.data.columns:
+            unique_teams = sorted(self.data['team'].dropna().unique())
+            print(f"\n🏁 EQUIPOS ÚNICOS ({len(unique_teams)}):")
+            for i, team in enumerate(unique_teams, 1):
+                # Obtener años en que aparece cada equipo
+                team_years = sorted(self.data[self.data['team'] == team]['year'].unique()) if 'year' in self.data.columns else []
+                years_str = ' - '.join(map(str, team_years))
+                
+                print(f"   {i:2d}. {team} {years_str}")
+                
+            # Mostrar distribución de pilotos por equipo
+            if 'driver' in self.data.columns:
+                print(f"\n📊 DISTRIBUCIÓN DE REGISTROS POR EQUIPO:")
+                team_counts = self.data['team'].value_counts()
+                for team, count in team_counts.items():
+                    percentage = (count / len(self.data)) * 100
+                    print(f"   {team}: {count:,} registros ({percentage:.1f}%)")
+        else:
+            print("\n❌ No se encontró columna 'team'")
+        
+        # Análisis de circuitos/carreras
+        if 'race_name' in self.data.columns:
+            unique_races = sorted(self.data['race_name'].dropna().unique())
+            print(f"\n🏟️  CIRCUITOS/CARRERAS ÚNICOS ({len(unique_races)}):")
+            for i, race in enumerate(unique_races, 1):
+                print(f"   {i:2d}. {race}")
+                
+            # Mostrar frecuencia de cada carrera
+            print(f"\n📈 FRECUENCIA DE CARRERAS EN EL DATASET:")
+            race_counts = self.data['race_name'].value_counts()
+            for race, count in race_counts.items():
+                years_present = sorted(self.data[self.data['race_name'] == race]['year'].unique()) if 'year' in self.data.columns else []
+                print(f"   {race}: {count:,} registros ({len(years_present)} años: {years_present})")
+        else:
+            print("\n❌ No se encontró columna 'race_name'")
+        
+        # Análisis de compounds de neumáticos si existe
+        if 'primary_compound' in self.data.columns:
+            unique_compounds = sorted(self.data['primary_compound'].dropna().unique())
+            print(f"\n🛞 COMPUESTOS DE NEUMÁTICOS ÚNICOS ({len(unique_compounds)}):")
+            for i, compound in enumerate(unique_compounds, 1):
+                print(f"   {i}. {compound}")
+                
+            # Distribución de uso de compuestos
+            print(f"\n📊 USO DE COMPUESTOS:")
+            compound_counts = self.data['primary_compound'].value_counts()
+            for compound, count in compound_counts.items():
+                percentage = (count / len(self.data[self.data['primary_compound'].notna()])) * 100
+                print(f"   {compound}: {count:,} usos ({percentage:.1f}%)")
+        
+        # Guardar entidades únicas en los resultados
+        self.analysis_results['unique_entities'] = {
+            'drivers': sorted(self.data['driver'].dropna().unique()) if 'driver' in self.data.columns else [],
+            'teams': sorted(self.data['team'].dropna().unique()) if 'team' in self.data.columns else [],
+            'races': sorted(self.data['race_name'].dropna().unique()) if 'race_name' in self.data.columns else [],
+            'compounds': sorted(self.data['primary_compound'].dropna().unique()) if 'primary_compound' in self.data.columns else []
+        }
+
     def analyze_by_year(self):
         """Análisis detallado por año"""
         if 'year' not in self.data.columns:
@@ -277,7 +354,11 @@ class F1DataExplorer:
             if rain_cols:
                 for col in rain_cols:
                     if col in year_data.columns:
-                        rain_percentage = (year_data[col] == 'Sí').sum() / len(year_data) * 100 if 'Sí' in year_data[col].values else 0
+                        # Manejar tanto valores booleanos como strings
+                        if year_data[col].dtype == bool:
+                            rain_percentage = (year_data[col] == True).sum() / len(year_data) * 100
+                        else:
+                            rain_percentage = (year_data[col] == 'Sí').sum() / len(year_data) * 100 if 'Sí' in year_data[col].values else 0
                         print(f"🌧️  Porcentaje con lluvia: {rain_percentage:.1f}%")
                         break
                         
@@ -448,6 +529,7 @@ class F1DataExplorer:
         self.analyze_columns_by_type()
         self.analyze_weather_data()
         self.analyze_performance_metrics()
+        self.analyze_unique_entities()  # Nueva función
         self.analyze_by_year()
         self.identify_features_for_training()
         self.generate_data_quality_report()
