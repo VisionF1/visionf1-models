@@ -12,6 +12,14 @@ def clean_data(raw_data):
     # Crear una copia para no modificar los datos originales
     cleaned_data = raw_data.copy()
     
+    print(f"🔍 DEBUG clean_data - Datos de entrada:")
+    print(f"   Total filas: {len(cleaned_data)}")
+    if 'year' in cleaned_data.columns:
+        year_counts = cleaned_data['year'].value_counts().sort_index()
+        print(f"   Distribución por año:")
+        for year, count in year_counts.items():
+            print(f"     {year}: {count} filas")
+    
     # Convertir columnas con diccionarios a strings para poder usar drop_duplicates
     dict_columns = []
     for col in cleaned_data.columns:
@@ -22,11 +30,39 @@ def clean_data(raw_data):
                 lambda x: convert_dict_to_json(x) if isinstance(x, dict) else str(x)
             )
     
+    print(f"🔍 DEBUG clean_data - Después de convertir diccionarios:")
+    print(f"   Total filas: {len(cleaned_data)}")
+    
     # Eliminar filas con valores nulos en columnas críticas
-    critical_columns = ['driver', 'best_lap_time', 'clean_air_pace']
+    critical_columns = ['driver']  # Solo requerir que driver no sea NaN
     existing_critical = [col for col in critical_columns if col in cleaned_data.columns]
+    
+    print(f"🔍 DEBUG clean_data - Columnas críticas: {existing_critical}")
+    
     if existing_critical:
+        # Debug: Mostrar cuántos NaN hay por columna crítica y año
+        for col in existing_critical:
+            print(f"   Columna '{col}':")
+            if 'year' in cleaned_data.columns:
+                for year in sorted(cleaned_data['year'].unique()):
+                    year_data = cleaned_data[cleaned_data['year'] == year]
+                    nan_count = year_data[col].isna().sum()
+                    total_count = len(year_data)
+                    print(f"     {year}: {nan_count}/{total_count} NaN ({100*nan_count/total_count:.1f}%)")
+            else:
+                nan_count = cleaned_data[col].isna().sum()
+                total_count = len(cleaned_data)
+                print(f"     Total: {nan_count}/{total_count} NaN ({100*nan_count/total_count:.1f}%)")
+        
         cleaned_data = cleaned_data.dropna(subset=existing_critical)
+        
+        print(f"🔍 DEBUG clean_data - Después de eliminar NaN en columnas críticas:")
+        print(f"   Total filas: {len(cleaned_data)}")
+        if 'year' in cleaned_data.columns:
+            year_counts = cleaned_data['year'].value_counts().sort_index()
+            print(f"   Distribución por año:")
+            for year, count in year_counts.items():
+                print(f"     {year}: {count} filas")
     
     # Eliminar duplicados usando las columnas string para diccionarios
     if dict_columns:
@@ -39,6 +75,14 @@ def clean_data(raw_data):
         cleaned_data = cleaned_data.drop(columns=str_columns)
     else:
         cleaned_data = cleaned_data.drop_duplicates()
+    
+    print(f"🔍 DEBUG clean_data - Después de eliminar duplicados:")
+    print(f"   Total filas: {len(cleaned_data)}")
+    if 'year' in cleaned_data.columns:
+        year_counts = cleaned_data['year'].value_counts().sort_index()
+        print(f"   Distribución por año:")
+        for year, count in year_counts.items():
+            print(f"     {year}: {count} filas")
     
     return cleaned_data
 

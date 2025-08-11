@@ -14,37 +14,46 @@ class ModelTrainer:
         self.results = {}
 
     def _initialize_models_with_hyperparams(self):
+        """Inicializa modelos con hiperparámetros optimizados ANTI-OVERFITTING"""
         return {
             'RandomForest': {
                 'model_class': RandomForestPredictor,
                 'param_grid': {
-                    'n_estimators': [50, 100],
-                    'max_depth': [3, 5],
-                    'min_samples_split': [5, 10],
-                    'min_samples_leaf': [2, 4]
+                    'n_estimators': [30, 50],           # REDUCIDO de [50, 100]
+                    'max_depth': [3, 4],                # REDUCIDO de [3, 5]
+                    'min_samples_split': [10, 20],      # AUMENTADO de [5, 10]
+                    'min_samples_leaf': [5, 10],        # AUMENTADO de [2, 4]
+                    'max_features': ['sqrt', 0.5],      # NUEVO: limitar features
+                    'bootstrap': [True],                # NUEVO: mantener bootstrap
+                    'oob_score': [True]                 # NUEVO: out-of-bag score
                 }
             },
             'XGBoost': {
                 'model_class': XGBoostPredictor,
                 'param_grid': {
-                    'n_estimators': [30, 50, 100],
-                    'max_depth': [3, 5],
-                    'learning_rate': [0.01, 0.05, 0.1],
-                    'subsample': [0.6, 0.8],
-                    'colsample_bytree': [0.6, 0.8],
-                    'reg_alpha': [0.01, 0.1],  # L1 regularization
-                    'reg_lambda': [0.01, 0.1]  # L2 regularization
+                    'n_estimators': [20, 30, 50],       # REDUCIDO de [30, 50, 100]
+                    'max_depth': [2, 3],                # REDUCIDO de [3, 5]
+                    'learning_rate': [0.01, 0.03, 0.05], # REDUCIDO de [0.01, 0.05, 0.1]
+                    'subsample': [0.5, 0.7],            # REDUCIDO de [0.6, 0.8]
+                    'colsample_bytree': [0.4, 0.6],     # REDUCIDO de [0.6, 0.8]
+                    'reg_alpha': [0.1, 0.5, 1.0],       # AUMENTADO de [0.01, 0.1]
+                    'reg_lambda': [0.1, 0.5, 1.0],      # AUMENTADO de [0.01, 0.1]
+                    'min_child_weight': [3, 5, 7],      # NUEVO: peso mínimo hojas
+                    'gamma': [0.1, 0.5]                 # NUEVO: regularización gamma
                 }
             },
             'GradientBoosting': {
                 'model_class': GradientBoostingPredictor,
                 'param_grid': {
-                    'n_estimators': [30, 50],  # REDUCIR para evitar overfitting
-                    'max_depth': [2, 3],       # REDUCIR profundidad
-                    'learning_rate': [0.01, 0.05],  # LEARNING RATE más bajo
-                    'subsample': [0.6, 0.8],
-                    'min_samples_split': [10, 20],  # AUMENTAR splits mínimos
-                    'min_samples_leaf': [5, 10]     # AUMENTAR hojas mínimas
+                    'n_estimators': [20, 30],           # REDUCIDO de [30, 50]
+                    'max_depth': [2, 3],                # Mantener [2, 3]
+                    'learning_rate': [0.01, 0.03],      # REDUCIDO de [0.01, 0.05]
+                    'subsample': [0.5, 0.7],            # REDUCIDO de [0.6, 0.8]
+                    'min_samples_split': [15, 25],      # AUMENTADO de [10, 20]
+                    'min_samples_leaf': [8, 12],        # AUMENTADO de [5, 10]
+                    'max_features': ['sqrt', 0.5],      # NUEVO: limitar features
+                    'validation_fraction': [0.1],       # NUEVO: validación temprana
+                    'n_iter_no_change': [5]             # NUEVO: parada temprana
                 }
             }
         }

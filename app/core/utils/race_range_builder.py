@@ -10,12 +10,28 @@ class RaceRangeBuilder:
         years = config.get("years", [2024])
         max_races_per_year = config.get("max_races_per_year", 24)
         
+        print(f"🏗️  Construyendo rango de carreras:")
+        print(f"   Años configurados: {years}")
+        print(f"   Max carreras por año: {max_races_per_year}")
+        
         for year in years:
             print(f"🔍 Detectando carreras para {year}...")
             races = self._get_races_for_year(year, max_races_per_year)
+            print(f"   ✅ {len(races)} carreras agregadas para {year}")
             race_range.extend(races)
         
-        print(f"📊 Total carreras: {len(race_range)}")
+        print(f"📊 Total carreras en el rango: {len(race_range)}")
+        
+        # Debug: Mostrar distribución por año
+        year_distribution = {}
+        for race in race_range:
+            year = race['year']
+            year_distribution[year] = year_distribution.get(year, 0) + 1
+        
+        print(f"📅 Distribución final por año:")
+        for year, count in sorted(year_distribution.items()):
+            print(f"   {year}: {count} carreras")
+        
         return race_range
     
     def _get_races_for_year(self, year, max_races):
@@ -39,7 +55,10 @@ class RaceRangeBuilder:
     
     def _count_completed_races(self, year, available_races, max_races):
         """Cuenta carreras completadas para años actuales/futuros"""
-        if year < 2025:
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        if year < current_year:
             return available_races
         
         print(f"   🔍 Verificando carreras completadas en {year}...")
@@ -85,7 +104,10 @@ class RaceRangeBuilder:
     
     def _fallback_races(self, year):
         """Fallback para cuando falla la obtención del calendario"""
-        fallback_count = 24 if year <= 2024 else 13
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        fallback_count = 24 if year <= current_year else 13
         print(f"   🔄 Usando fallback: {fallback_count} carreras")
         
         return [{

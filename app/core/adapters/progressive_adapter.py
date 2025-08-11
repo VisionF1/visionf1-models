@@ -1,9 +1,11 @@
 from app.config import DRIVERS_2025, ADAPTATION_SYSTEM, PREDICTION_CONFIG
+from app.config_historical import get_drivers_for_year
 
 class ProgressiveAdapter:
-    def __init__(self):
+    def __init__(self, target_year=2025):
         self.adaptation_config = ADAPTATION_SYSTEM
-        self.drivers_config = DRIVERS_2025
+        self.target_year = target_year
+        self.drivers_config = get_drivers_for_year(target_year)
         
     def calculate_adaptation_penalty(self, driver, current_race_number):
         """Calcula la penalización de adaptación basada en el número de carrera actual"""
