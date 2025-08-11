@@ -1,6 +1,6 @@
 # Configuración del rango de carreras para el entrenamiento - MÚLTIPLES AÑOS
 RACE_RANGE = {
-    "years": [2024, 2025],  # Años a descargar
+    "years": [2022, 2023, 2024, 2025],  # Años a descargar
     "max_races_per_year": 24,  # Máximo de carreras por año (F1 tiene ~24 carreras)
     "include_current_year": True,  # Incluir año actual aunque esté incompleto
     "auto_detect_available": True,  # Detectar automáticamente carreras disponibles
@@ -15,16 +15,20 @@ PREDICTION_CONFIG = {
         "circuit_name": "Hungaroring",
         "race_number": 13  # Número de carrera en la temporada 2025
     },
-    "use_historical_data": False
+    "use_historical_data": True
 }
 
 # 🔥 FACTOR DE IMPORTANCIA DE DATOS (SIMPLE)
 DATA_IMPORTANCE = {
-    "2025_weight": 0.75,  # 75% importancia a datos de 2025
+
+    "2025_weight": 0.50,  # 50% importancia a datos de 2025
     "2024_weight": 0.25,  # 25% importancia a datos de 2024
+    "2023_weight": 0.15,  # 15% importancia a datos de 2023
+    "2022_weight": 0.10,  # 10% importancia a datos de 2022
+
     "ml_vs_config": {
-        "ml_weight": 0.25,     # 25% modelo ML (histórico)
-        "config_weight": 0.75  # 75% configuración 2025 (actual)
+        "ml_weight": 0.50,     # 50% modelo ML (histórico)
+        "config_weight": 0.50   # 50% configuración 2025 (actual)
     }
 }
 
