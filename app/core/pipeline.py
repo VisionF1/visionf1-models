@@ -1,22 +1,24 @@
 import pickle
 import os
+import pandas as pd
+from datetime import datetime
 from app.data.collectors.fastf1_collector import FastF1Collector
 from app.data.preprocessors.data_cleaner import clean_data
-from app.core.training.data_preparer import DataPreparer
+from app.core.training.enhanced_data_preparer import EnhancedDataPreparer
 from app.core.training.model_trainer import ModelTrainer
 from app.core.utils.race_range_builder import RaceRangeBuilder
 from app.core.predictors.simple_position_predictor import SimplePositionPredictor
 
 class Pipeline:
-    """Pipeline principal"""
+    """Pipeline principal con features avanzadas"""
     
     def __init__(self, config):
         self.config = config
         self.data = None
         
-        # Componentes especializados
+        # Componentes especializados con features avanzadas
         self.race_range_builder = RaceRangeBuilder()
-        self.data_preparer = DataPreparer()
+        self.data_preparer = EnhancedDataPreparer(use_advanced_features=True)
         self.model_trainer = ModelTrainer()
         
         # Collector
@@ -40,7 +42,10 @@ class Pipeline:
             print(f"⚠️  ADVERTENCIA: Dataset pequeño ({data_len} muestras)")
             print(f"   💡 Considera recolectar más datos para evitar overfitting")
         
-        # 3. Preparar datos para entrenamiento
+        # 3. Guardar dataset original antes de entrenamiento
+        self._save_dataset_before_training()
+        
+        # 4. Preparar datos para entrenamiento
         training_results = self.data_preparer.prepare_training_data(self.data)
         if training_results[0] is None:
             print("❌ Error preparando datos de entrenamiento")
@@ -48,7 +53,10 @@ class Pipeline:
         
         X_train, X_test, y_train, y_test, label_encoder = training_results
         
-        # 4. Validar split de datos
+        # 5. Guardar dataset después del feature engineering
+        self._save_dataset_after_feature_engineering(X_train, X_test, y_train, y_test)
+        
+        # 6. Validar split de datos
         print(f"📊 Datos de entrenamiento: {len(X_train)} muestras")
         print(f"📊 Datos de test: {len(X_test)} muestras")
         
@@ -56,14 +64,14 @@ class Pipeline:
             print(f"🚨 ADVERTENCIA: Muy pocos datos de entrenamiento")
             print(f"   💡 Cross-validation será limitado")
         
-        # 5. Entrenar modelos con cross-validation
+        # 7. Entrenar modelos con cross-validation
         model_trainer = ModelTrainer(use_time_series_cv=True)
         results = model_trainer.train_all_models(
             X_train, X_test, y_train, y_test, 
             label_encoder, self.data_preparer.feature_names
         )
         
-        # 6. Validar resultados
+        # 8. Validar resultados
         successful_models = [name for name, metrics in results.items() if 'error' not in metrics]
         
         if not successful_models:
@@ -119,3 +127,105 @@ class Pipeline:
         with open(cache_file, 'wb') as f:
             pickle.dump(self.data, f)
         print(f"💾 Datos guardados en cache: {cache_file}")
+
+    def _save_dataset_before_training(self):
+        """Guarda el dataset en CSV antes del entrenamiento"""
+        if self.data is None or len(self.data) == 0:
+            print("⚠️  No hay datos para guardar")
+            return
+        
+        # Crear directorio si no existe
+        cache_dir = "app/models_cache"
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        # Generar nombre de archivo con timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_file = os.path.join(cache_dir, f"dataset_before_training_{timestamp}.csv")
+        
+        try:
+            # Convertir a DataFrame si no lo es ya
+            if isinstance(self.data, pd.DataFrame):
+                df = self.data.copy()
+            else:
+                df = pd.DataFrame(self.data)
+            
+            # Guardar como CSV
+            df.to_csv(csv_file, index=False)
+            print(f"📊 Dataset guardado antes del entrenamiento: {csv_file}")
+            print(f"   📈 Forma del dataset: {df.shape}")
+            print(f"   📋 Columnas: {list(df.columns)}")
+            
+            # También guardar una versión sin timestamp para referencia
+            latest_file = os.path.join(cache_dir, "dataset_before_training_latest.csv")
+            df.to_csv(latest_file, index=False)
+            print(f"📊 Versión latest guardada: {latest_file}")
+            
+        except Exception as e:
+            print(f"❌ Error guardando dataset: {e}")
+            # Intentar guardar información básica
+            try:
+                info_file = os.path.join(cache_dir, f"dataset_info_{timestamp}.txt")
+                with open(info_file, 'w') as f:
+                    f.write(f"Dataset info:\n")
+                    f.write(f"Type: {type(self.data)}\n")
+                    f.write(f"Length: {len(self.data)}\n")
+                    if hasattr(self.data, 'shape'):
+                        f.write(f"Shape: {self.data.shape}\n")
+                    if hasattr(self.data, 'columns'):
+                        f.write(f"Columns: {list(self.data.columns)}\n")
+                print(f"📝 Info del dataset guardada: {info_file}")
+            except:
+                print("❌ No se pudo guardar información del dataset")
+
+    def _save_dataset_after_feature_engineering(self, X_train, X_test, y_train, y_test):
+        """Guarda el dataset después del feature engineering y limpieza"""
+        try:
+            # Crear directorio si no existe
+            cache_dir = "app/models_cache"
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir, exist_ok=True)
+            
+            # Generar nombre de archivo con timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Combinar datos de entrenamiento y test
+            X_combined = pd.concat([X_train, X_test], ignore_index=True)
+            y_combined = pd.concat([y_train, y_test], ignore_index=True)
+            
+            # Crear DataFrame final con features + target
+            df_processed = X_combined.copy()
+            df_processed['target_position'] = y_combined
+            
+            # Agregar columnas indicadoras de split
+            df_processed['split'] = ['train'] * len(X_train) + ['test'] * len(X_test)
+            
+            # Guardar archivos
+            csv_file = os.path.join(cache_dir, f"dataset_after_feature_engineering_{timestamp}.csv")
+            df_processed.to_csv(csv_file, index=False)
+            
+            # También guardar versión latest
+            latest_file = os.path.join(cache_dir, "dataset_after_feature_engineering_latest.csv")
+            df_processed.to_csv(latest_file, index=False)
+            
+            print(f"🧠 Dataset procesado guardado: {csv_file}")
+            print(f"   📈 Forma final: {df_processed.shape}")
+            print(f"   🎯 Features finales: {list(X_combined.columns)}")
+            print(f"   📊 Split: {len(X_train)} train + {len(X_test)} test = {len(df_processed)} total")
+            print(f"🧠 Versión latest: {latest_file}")
+            
+        except Exception as e:
+            print(f"❌ Error guardando dataset procesado: {e}")
+            try:
+                # Información básica como fallback
+                info_file = os.path.join(cache_dir, f"processed_dataset_info_{timestamp}.txt")
+                with open(info_file, 'w') as f:
+                    f.write(f"Processed Dataset Info:\n")
+                    f.write(f"X_train shape: {X_train.shape}\n")
+                    f.write(f"X_test shape: {X_test.shape}\n")
+                    f.write(f"y_train length: {len(y_train)}\n")
+                    f.write(f"y_test length: {len(y_test)}\n")
+                    f.write(f"Features: {list(X_train.columns)}\n")
+                print(f"📝 Info del dataset procesado guardada: {info_file}")
+            except:
+                print("❌ No se pudo guardar información del dataset procesado")

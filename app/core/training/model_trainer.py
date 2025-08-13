@@ -19,33 +19,39 @@ class ModelTrainer:
             'RandomForest': {
                 'model_class': RandomForestPredictor,
                 'param_grid': {
-                    'n_estimators': [50, 100],
-                    'max_depth': [3, 5],
-                    'min_samples_split': [5, 10],
-                    'min_samples_leaf': [2, 4]
+                    'n_estimators': [50, 100],      # Solo 2 opciones
+                    'max_depth': [3, 4],            # Solo 2 opciones
+                    'min_samples_split': [10, 20],  # Solo 2 opciones
+                    'min_samples_leaf': [5, 10],    # Solo 2 opciones
+                    'max_features': ['sqrt', 0.5],  # Solo 2 opciones
+                    'bootstrap': [True],            # Fijo
+                    'oob_score': [True]             # Fijo - TOTAL: 2^5 = 32 combinaciones
                 }
             },
             'XGBoost': {
                 'model_class': XGBoostPredictor,
                 'param_grid': {
-                    'n_estimators': [30, 50, 100],
-                    'max_depth': [3, 5],
-                    'learning_rate': [0.01, 0.05, 0.1],
-                    'subsample': [0.6, 0.8],
-                    'colsample_bytree': [0.6, 0.8],
-                    'reg_alpha': [0.01, 0.1],  # L1 regularization
-                    'reg_lambda': [0.01, 0.1]  # L2 regularization
+                    'n_estimators': [50, 100],      # Solo 2 opciones
+                    'max_depth': [3, 4],            # Solo 2 opciones  
+                    'learning_rate': [0.05, 0.1],  # Solo 2 opciones
+                    'subsample': [0.7, 0.8],       # Solo 2 opciones
+                    'colsample_bytree': [0.7, 0.8], # Solo 2 opciones
+                    'reg_alpha': [0.1, 0.5],       # Solo 2 opciones
+                    'reg_lambda': [0.1, 0.5],      # Solo 2 opciones
+                    'min_child_weight': [3, 5]     # Solo 2 opciones - TOTAL: 2^8 = 256 combinaciones
                 }
             },
             'GradientBoosting': {
                 'model_class': GradientBoostingPredictor,
                 'param_grid': {
-                    'n_estimators': [30, 50],  # REDUCIR para evitar overfitting
-                    'max_depth': [2, 3],       # REDUCIR profundidad
-                    'learning_rate': [0.01, 0.05],  # LEARNING RATE más bajo
-                    'subsample': [0.6, 0.8],
-                    'min_samples_split': [10, 20],  # AUMENTAR splits mínimos
-                    'min_samples_leaf': [5, 10]     # AUMENTAR hojas mínimas
+                    'n_estimators': [30, 50],       # Solo 2 opciones
+                    'max_depth': [2, 3],            # Solo 2 opciones
+                    'learning_rate': [0.05, 0.1],  # Solo 2 opciones
+                    'subsample': [0.7, 0.8],       # Solo 2 opciones
+                    'min_samples_split': [15, 25],  # Solo 2 opciones
+                    'min_samples_leaf': [8, 12],    # Solo 2 opciones
+                    'max_features': ['sqrt', 0.5],  # Solo 2 opciones
+                    'validation_fraction': [0.1]    # Fijo - TOTAL: 2^7 = 128 combinaciones
                 }
             }
         }
@@ -57,11 +63,17 @@ class ModelTrainer:
             print("❌ No hay datos para entrenar")
             return {}
 
-        if len(X_train) < 30:
-            print("🛑 Dataset chico: reduciendo hiperparámetros para evitar overfitting")
-            self.models['RandomForest']['param_grid']['max_depth'] = [3]
-            self.models['XGBoost']['param_grid']['max_depth'] = [3]
-            self.models['GradientBoosting']['param_grid']['max_depth'] = [3]
+        # 🛡️ DETECCIÓN Y CORRECCIÓN DE OVERFITTING
+        print("🛡️ Aplicando estrategias anti-overfitting...")
+        
+        if len(X_train) < 50:
+            print("🛑 Dataset muy pequeño: aplicando regularización extrema")
+            self._apply_extreme_regularization()
+        elif len(X_train) < 200:
+            print("⚠️ Dataset pequeño: aplicando regularización fuerte")
+            self._apply_strong_regularization()
+        else:
+            print("✅ Dataset adecuado: usando regularización estándar")
 
         self._save_metadata(label_encoder, feature_names)
         cv_splitter = self._get_cv_splitter(X_train)
@@ -76,10 +88,54 @@ class ModelTrainer:
             )
 
         self._show_detailed_comparison()
-
         self._save_training_results(self.results)
         
         return self.results
+
+    def _apply_extreme_regularization(self):
+        """Aplicar regularización extrema para datasets muy pequeños"""
+        print("   🔒 Aplicando regularización extrema...")
+        
+        # RandomForest ultra-conservador
+        self.models['RandomForest']['param_grid'].update({
+            'n_estimators': [10, 20],
+            'max_depth': [2, 3],
+            'min_samples_split': [20, 30],
+            'min_samples_leaf': [10, 15],
+            'max_features': ['sqrt']
+        })
+        
+        # XGBoost ultra-conservador  
+        self.models['XGBoost']['param_grid'].update({
+            'n_estimators': [10, 20],
+            'max_depth': [2, 3],
+            'learning_rate': [0.01, 0.05],
+            'reg_alpha': [1.0, 2.0],
+            'reg_lambda': [1.0, 2.0],
+            'min_child_weight': [5, 10]
+        })
+        
+        # GradientBoosting ultra-conservador
+        self.models['GradientBoosting']['param_grid'].update({
+            'n_estimators': [10, 20],
+            'max_depth': [2],
+            'learning_rate': [0.01, 0.05],
+            'min_samples_split': [25, 35],
+            'min_samples_leaf': [12, 20]
+        })
+
+    def _apply_strong_regularization(self):
+        """Aplicar regularización fuerte para datasets pequeños"""
+        print("   🔐 Aplicando regularización fuerte...")
+        
+        # Reducir complejidad manteniendo exploración
+        for model_name in self.models:
+            param_grid = self.models[model_name]['param_grid']
+            
+            if 'max_depth' in param_grid:
+                param_grid['max_depth'] = [2, 3]  # Limitar profundidad
+            if 'n_estimators' in param_grid:
+                param_grid['n_estimators'] = [20, 30, 50]  # Menos estimadores
 
     def _get_cv_splitter(self, X_train):
         n_samples = len(X_train)
@@ -99,11 +155,9 @@ class ModelTrainer:
 
             print(f"🔧 Optimizando hiperparámetros para {name}...")
 
+            # Solo usar fit_params para modelos que los necesiten (sin XGBoost)
             fit_params = {}
-            if name == 'XGBoost':
-                # Para XGBoost usar eval_set sin early_stopping en GridSearchCV
-                fit_params = {}  # Vacío para GridSearchCV
-            elif hasattr(base_model.model, "early_stopping_rounds"):
+            if hasattr(base_model.model, "early_stopping_rounds") and name != 'XGBoost':
                 fit_params = {
                     "eval_set": [(X_test, y_test)],
                     "early_stopping_rounds": 10,
@@ -111,17 +165,11 @@ class ModelTrainer:
                 }
 
             if len(X_train) > 20:
-                # CONFIGURACIÓN ESPECIAL PARA XGBOOST
+                # CONFIGURACIÓN ESPECIAL PARA XGBOOST SIN EARLY STOPPING (API NUEVA)
                 if name == 'XGBoost':
-                    grid_search = GridSearchCV(
-                        base_model.model,
-                        model_config['param_grid'],
-                        cv=cv_splitter,
-                        scoring='neg_mean_squared_error',
-                        n_jobs=-1,
-                        verbose=0
-                        )
-                else:
+                    # Para XGBoost, usar GridSearchCV estándar sin early stopping
+                    print(f"🔍 Optimización estándar para {name} (sin early stopping)...")
+                    
                     grid_search = GridSearchCV(
                         base_model.model,
                         model_config['param_grid'],
@@ -131,19 +179,43 @@ class ModelTrainer:
                         verbose=0
                     )
 
-                print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
-                combinations = self._get_param_combinations(model_config['param_grid'])
-                print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
-                grid_search.fit(X_train, y_train)  # Sin fit_params para XGBoost
-                
-                # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
-                self._show_hyperparameter_search_details(grid_search, name)
-                
-                best_model = grid_search.best_estimator_
-                best_params = grid_search.best_params_
+                    print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
+                    combinations = self._get_param_combinations(model_config['param_grid'])
+                    print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
+                    grid_search.fit(X_train, y_train)
+                    
+                    # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
+                    self._show_hyperparameter_search_details(grid_search, name)
+                    
+                    best_model = grid_search.best_estimator_
+                    best_params = grid_search.best_params_
+                    print(f"✅ Mejor CV score: {-grid_search.best_score_:.4f}")
+                    
+                else:
+                    # Para otros modelos, usar GridSearchCV estándar
+                    grid_search = GridSearchCV(
+                        base_model.model,
+                        model_config['param_grid'],
+                        cv=cv_splitter,
+                        scoring='neg_mean_squared_error',
+                        n_jobs=-1,
+                        verbose=0
+                    )
+
+                    print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
+                    combinations = self._get_param_combinations(model_config['param_grid'])
+                    print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
+                    grid_search.fit(X_train, y_train)
+                    
+                    # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
+                    self._show_hyperparameter_search_details(grid_search, name)
+                    
+                    best_model = grid_search.best_estimator_
+                    best_params = grid_search.best_params_
 
                 print(f"✅ Mejores parámetros: {best_params}")
-                print(f"✅ Mejor CV score: {-grid_search.best_score_:.4f}")
+                if name != 'XGBoost':
+                    print(f"✅ Mejor CV score: {-grid_search.best_score_:.4f}")
             else:
                 print(f"⚠️  Dataset pequeño ({len(X_train)} muestras), usando parámetros por defecto")
                 base_model.train(X_train, y_train)
@@ -178,8 +250,15 @@ class ModelTrainer:
                 'overfitting_score': self._calculate_overfitting_score(
                     mean_squared_error(y_train, y_pred_train),
                     mean_squared_error(y_test, y_pred_test)
-                )
+                ),
+                # Nuevas métricas anti-overfitting
+                'generalization_gap': mean_squared_error(y_test, y_pred_test) - mean_squared_error(y_train, y_pred_train),
+                'cv_stability': cv_std / cv_mean if cv_mean > 0 else float('inf'),
+                'train_test_r2_gap': r2_score(y_train, y_pred_train) - r2_score(y_test, y_pred_test)
             }
+
+            # 🚨 DETECCIÓN AVANZADA DE OVERFITTING
+            self._detect_overfitting_patterns(metrics, name)
 
             if metrics['train_mse'] < 0.0001 and metrics['test_mse'] > 0.05:
                 print("🚨 El modelo está memorizando los datos de entrenamiento")
@@ -194,6 +273,83 @@ class ModelTrainer:
         except Exception as e:
             print(f"❌ Error entrenando {name}: {e}")
             self.results[name] = {'error': str(e)}
+
+    def _detect_overfitting_patterns(self, metrics, model_name):
+        """Detecta patrones específicos de overfitting"""
+        print(f"\n🔍 ANÁLISIS DE OVERFITTING - {model_name}:")
+        
+        # 1. Gap de generalización
+        gen_gap = metrics['generalization_gap']
+        if gen_gap > 5.0:
+            print(f"   🚨 Gap de generalización alto: {gen_gap:.3f} (Train vs Test)")
+        elif gen_gap > 2.0:
+            print(f"   ⚠️  Gap de generalización moderado: {gen_gap:.3f}")
+        else:
+            print(f"   ✅ Gap de generalización bueno: {gen_gap:.3f}")
+        
+        # 2. Estabilidad del CV
+        cv_stability = metrics['cv_stability']
+        if cv_stability > 0.15:
+            print(f"   🚨 CV inestable: {cv_stability:.3f} (alta variabilidad)")
+        elif cv_stability > 0.10:
+            print(f"   ⚠️  CV moderadamente estable: {cv_stability:.3f}")
+        else:
+            print(f"   ✅ CV estable: {cv_stability:.3f}")
+        
+        # 3. Gap de R²
+        r2_gap = metrics['train_test_r2_gap']
+        if r2_gap > 0.15:
+            print(f"   🚨 R² gap alto: {r2_gap:.3f} (sobreajuste)")
+        elif r2_gap > 0.08:
+            print(f"   ⚠️  R² gap moderado: {r2_gap:.3f}")
+        else:
+            print(f"   ✅ R² gap bueno: {r2_gap:.3f}")
+        
+        # 4. Score overfitting combinado
+        overfitting_level = self._calculate_overfitting_level(metrics)
+        print(f"   📊 Nivel de overfitting: {overfitting_level}")
+        
+        # 5. Recomendaciones
+        if any([gen_gap > 3.0, cv_stability > 0.12, r2_gap > 0.10]):
+            print(f"   💡 RECOMENDACIONES:")
+            if gen_gap > 3.0:
+                print(f"      - Incrementar regularización")
+                print(f"      - Reducir complejidad del modelo")
+            if cv_stability > 0.12:
+                print(f"      - Aumentar datos de entrenamiento")
+                print(f"      - Usar ensemble methods")
+            if r2_gap > 0.10:
+                print(f"      - Feature selection más agresiva")
+                print(f"      - Early stopping más temprano")
+
+    def _calculate_overfitting_level(self, metrics):
+        """Calcula un nivel combinado de overfitting"""
+        weights = {
+            'overfitting_score': 0.4,
+            'generalization_gap': 0.3,
+            'cv_stability': 0.2,
+            'train_test_r2_gap': 0.1
+        }
+        
+        # Normalizar métricas
+        norm_overfitting = min(metrics['overfitting_score'] - 1.0, 1.0)  # 0-1 scale
+        norm_gen_gap = min(metrics['generalization_gap'] / 10.0, 1.0)    # 0-1 scale
+        norm_cv_stability = min(metrics['cv_stability'] / 0.2, 1.0)      # 0-1 scale
+        norm_r2_gap = min(metrics['train_test_r2_gap'] / 0.2, 1.0)       # 0-1 scale
+        
+        combined_score = (
+            weights['overfitting_score'] * norm_overfitting +
+            weights['generalization_gap'] * norm_gen_gap +
+            weights['cv_stability'] * norm_cv_stability +
+            weights['train_test_r2_gap'] * norm_r2_gap
+        )
+        
+        if combined_score < 0.3:
+            return "🟢 Bajo (Bueno)"
+        elif combined_score < 0.6:
+            return "🟡 Moderado"
+        else:
+            return "🔴 Alto (Crítico)"
 
     def _get_param_combinations(self, param_grid):
         """Calcula el número total de combinaciones de hiperparámetros"""

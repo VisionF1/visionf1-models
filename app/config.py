@@ -15,7 +15,60 @@ PREDICTION_CONFIG = {
         "circuit_name": "Hungaroring",
         "race_number": 13  # Número de carrera en la temporada 2025
     },
-    "use_historical_data": True
+    "use_historical_data": True,
+    
+    # 🌤️ CONFIGURACIÓN METEOROLÓGICA PARA PREDICCIONES
+    "weather_scenarios": {
+        
+        # Escenario seco - condiciones ideales
+        "dry": {
+            "session_air_temp": 26.0,      # Temperatura ideal
+            "session_track_temp": 35.0,    # Temperatura de pista normal
+            "session_humidity": 45.0,      # Humedad baja
+            "session_rainfall": False,     # Sin lluvia
+            "description": "Condiciones secas e ideales"
+        },
+        
+        # Escenario caluroso - estrés térmico
+        "hot": {
+            "session_air_temp": 35.0,      # Muy caluroso
+            "session_track_temp": 50.0,    # Pista muy caliente
+            "session_humidity": 70.0,      # Humedad alta = más estrés
+            "session_rainfall": False,     # Sin lluvia
+            "description": "Condiciones muy calurosas (estrés térmico)"
+        },
+        
+        # Escenario húmedo - lluvia ligera
+        "wet": {
+            "session_air_temp": 18.0,      # Más fresco por lluvia
+            "session_track_temp": 22.0,    # Pista fría
+            "session_humidity": 85.0,      # Muy húmedo
+            "session_rainfall": True,      # Lluvia confirmada
+            "description": "Condiciones húmedas con lluvia"
+        },
+        
+        # Escenario extremo - tormenta
+        "storm": {
+            "session_air_temp": 15.0,      # Frío
+            "session_track_temp": 18.0,    # Pista muy fría
+            "session_humidity": 95.0,      # Humedad extrema
+            "session_rainfall": True,      # Lluvia intensa
+            "description": "Condiciones extremas - tormenta"
+        },
+        
+        # Escenario frío - condiciones invernales
+        "cold": {
+            "session_air_temp": 12.0,      # Muy frío
+            "session_track_temp": 15.0,    # Pista fría
+            "session_humidity": 60.0,      # Humedad media
+            "session_rainfall": False,     # Seco pero frío
+            "description": "Condiciones muy frías"
+        }
+    },
+    
+    # 🎯 CONFIGURACIÓN DE PREDICCIÓN ACTIVA
+    "active_scenario": "dry",  # Cambiar por: "dry", "hot", "wet", "storm", "cold"
+
 }
 
 # 🔥 FACTOR DE IMPORTANCIA DE DATOS (SIMPLE)

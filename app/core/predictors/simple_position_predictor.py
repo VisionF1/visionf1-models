@@ -4,6 +4,7 @@ import pickle
 import os
 from app.config import DRIVERS_2025, DATA_IMPORTANCE, PREDICTION_CONFIG, PENALTIES
 from app.core.adapters.progressive_adapter import ProgressiveAdapter
+from app.core.training.enhanced_data_preparer import EnhancedDataPreparer
 import random
 
 class SimplePositionPredictor:
@@ -16,6 +17,7 @@ class SimplePositionPredictor:
         self.label_encoder = None
         self.scaler = None
         self.adjustments = {}  # Añadido para evitar el error de atributo
+        self.enhanced_data_preparer = EnhancedDataPreparer(use_advanced_features=True)
         
     def load_best_model(self):
         """Carga el mejor modelo basado en métricas de rendimiento"""
@@ -268,14 +270,109 @@ class SimplePositionPredictor:
         return df
     
     def _create_ml_features(self, driver, config):
-        """Crea características para el modelo ML basadas en datos REALES"""
+        """Crea características para el modelo ML usando el sistema avanzado de features"""
+        try:
+            # Crear datos base completos simulados para este piloto
+            base_data = pd.DataFrame({
+                'driver': [driver],
+                'qualifying_position': [10],  # Posición media simulada
+                'grid_position': [10],
+                'team': [config["team"]],
+                'session_type': ['Race'],
+                'points_before_race': [0],
+                'race_name': ['Hungarian Grand Prix'],  # Añadir race_name
+                'season': [2025],
+                'year': [2025],  # Añadir year también
+                'round': [13],
+                
+                # Datos meteorológicos del escenario activo
+                'session_air_temp': [self._get_weather_value('session_air_temp')],
+                'session_track_temp': [self._get_weather_value('session_track_temp')],
+                'session_humidity': [self._get_weather_value('session_humidity')],
+                'session_rainfall': [self._get_weather_value('session_rainfall')],
+                
+                # Datos adicionales simulados
+                'quali_best_time': [90.0],  # Tiempo simulado
+                'race_best_lap_time': [92.0],
+                'clean_air_pace': [self._estimate_driver_pace(driver, config)],
+                'quali_gap_to_pole': [1.0],
+                'fp1_gap_to_fastest': [0.5],
+                
+                # Más datos simulados para evitar errores
+                'sector1_time': [30.0],
+                'sector2_time': [35.0],
+                'sector3_time': [25.0],
+                'lap_time': [90.0],
+                'position': [10],
+                'fastest_lap': [False],
+                'status': ['Finished']
+            })
+            
+            # Usar el sistema avanzado de features
+            result = self.enhanced_data_preparer.prepare_enhanced_features(base_data)
+            
+            # El método prepare_enhanced_features devuelve 4 elementos: X, y, label_encoder, feature_names
+            if isinstance(result, tuple) and len(result) == 4:
+                X, _, _, _ = result  # Solo necesitamos X para predicciones
+            elif isinstance(result, tuple) and len(result) == 2:
+                X, _ = result  # Formato alternativo (X, y)
+            else:
+                X = result     # Formato solo X
+            
+            if X is not None and len(X) > 0:
+                return X.iloc[0].values  # Retornar la primera (y única) fila como array
+            else:
+                # Fallback a features básicas si falla el sistema avanzado
+                return self._create_basic_ml_features(driver, config)
+                
+        except Exception as e:
+            print(f"⚠️ Error creando features avanzadas para {driver}: {str(e)}")
+            # Fallback a features básicas
+            return self._create_basic_ml_features(driver, config)
+    
+    def _get_weather_value(self, weather_param):
+        """Obtiene valores meteorológicos del escenario activo"""
+        try:
+            active_scenario = PREDICTION_CONFIG.get('active_scenario', 'default')
+            scenarios = PREDICTION_CONFIG.get('weather_scenarios', {})
+            
+            if active_scenario in scenarios:
+                scenario = scenarios[active_scenario]
+                if weather_param in scenario:
+                    return scenario[weather_param]
+            
+            # Valores por defecto
+            defaults = {
+                'session_air_temp': 25.0,
+                'session_track_temp': 35.0,
+                'session_humidity': 60.0,
+                'session_rainfall': False
+            }
+            return defaults.get(weather_param, 0)
+            
+        except Exception:
+            # Valores por defecto en caso de error
+            defaults = {
+                'session_air_temp': 25.0,
+                'session_track_temp': 35.0,
+                'session_humidity': 60.0,
+                'session_rainfall': False
+            }
+            return defaults.get(weather_param, 0)
+    
+    def _create_basic_ml_features(self, driver, config):
+        """Fallback: Crea características básicas si falla el sistema avanzado"""
         try:
             # 1. Driver encoded
             if self.label_encoder is not None:
                 try:
                     driver_encoded = self.label_encoder.transform([driver])[0]
                 except:
-                    driver_encoded = len(self.label_encoder.classes_) // 2
+                    # Fallback si el label_encoder no funciona
+                    if hasattr(self.label_encoder, 'classes_'):
+                        driver_encoded = len(self.label_encoder.classes_) // 2
+                    else:
+                        driver_encoded = hash(driver) % 100
             else:
                 driver_encoded = hash(driver) % 100
             
@@ -313,7 +410,7 @@ class SimplePositionPredictor:
             return features
             
         except Exception as e:
-            print(f"Error creando features para {driver}: {e}")
+            print(f"Error creando features básicas para {driver}: {e}")
             return None
     
     def _get_tier_features(self, tier):
