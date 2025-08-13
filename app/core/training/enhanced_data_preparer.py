@@ -57,10 +57,20 @@ class EnhancedDataPreparer:
         # Features base esenciales
         base_features = [
             'team_encoded',
+            'driver_encoded',           # NUEVO: Identidad del piloto
             'grid_position',
+            'quali_position',           # NUEVO: Mejor que grid_position
             'quali_best_time', 
             'race_best_lap_time',
-            'clean_air_pace'
+            'clean_air_pace',
+            'avg_position',             # NUEVO: Habilidad histórica piloto
+            'total_laps',               # NUEVO: Fiabilidad/DNF
+            'avg_tyre_life',            # NUEVO: Estrategia neumáticos
+            'position_changes',         # NUEVO: Habilidad adelantamiento
+            'fp3_best_time',            # NUEVO: Rendimiento pre-carrera
+            'q1_time',                  # NUEVO: Clasificación Q1
+            'q2_time',                  # NUEVO: Clasificación Q2
+            'q3_time'                   # NUEVO: Clasificación Q3
         ]
         
         # Features meteorológicas
@@ -120,17 +130,34 @@ class EnhancedDataPreparer:
             unique_teams_final = df['team'].nunique()
             print(f"   ✅ team_encoded: {unique_teams_final} equipos únicos (sin Unknown)")
         
+        # 5.5. Procesar driver encoding (IMPORTANTE!)
+        if 'driver' in df.columns:
+            from sklearn.preprocessing import LabelEncoder
+            driver_encoder = LabelEncoder()
+            df['driver_encoded'] = driver_encoder.fit_transform(df['driver'])
+            unique_drivers = df['driver'].nunique()
+            print(f"   ✅ driver_encoded: {unique_drivers} pilotos únicos")
+        
         # 6. Calcular performance histórico de equipos
         df = self._calculate_team_historical_performance(df)
         
         # 7. Procesar características meteorológicas
         df = self._process_weather_features(df)
         
-        # 8. Crear X e y
-        X = df[available_features].copy()
+        # 8. Crear X e y con features dinámicas
+        # Incluir features codificadas que se crearon dinámicamente
+        dynamic_features = []
+        if 'team_encoded' in df.columns:
+            dynamic_features.append('team_encoded')
+        if 'driver_encoded' in df.columns:
+            dynamic_features.append('driver_encoded')
         
-        # NUEVO: Garantizar que tenemos exactamente 20 features para predicciones
-        X = self._ensure_20_features(X)
+        # Combinar features disponibles con las dinámicas
+        final_features = available_features + dynamic_features
+        X = df[final_features].copy()
+        
+        # Asegurar que tengamos exactamente las features que necesitamos
+        X = self._ensure_31_features(X)
         
         # 9. Preparar variable objetivo
         target_columns = ['final_position', 'race_position', 'position']
@@ -351,12 +378,13 @@ class EnhancedDataPreparer:
         # Retornar en el formato esperado por el pipeline
         return X_train, X_test, y_train, y_test, self.label_encoder
     
-    def _ensure_20_features(self, X):
-        """Garantiza que X tenga exactamente 20 features, completando las faltantes"""
+    def _ensure_31_features(self, X):
+        """Garantiza que X tenga exactamente 31 features, completando las faltantes"""
         
-        # Lista exacta de las 20 features usadas en entrenamiento (del feature_names.pkl)
+        # Lista expandida con las nuevas features valiosas identificadas
         target_features = [
-            'grid_position',
+            # Features básicas mejoradas
+            'quali_position',            # Reemplaza grid_position (mejor correlación 0.672)
             'quali_best_time',
             'race_best_lap_time',
             'clean_air_pace',
@@ -364,6 +392,12 @@ class EnhancedDataPreparer:
             'session_track_temp',
             'session_humidity',
             'session_rainfall',
+            
+            # Features de identidad (IMPORTANTE!)
+            'team_encoded',              # Identidad del equipo (CLAVE para predicción)
+            'driver_encoded',            # Identidad del piloto (CLAVE para predicción)
+            
+            # Features avanzadas originales
             'quali_gap_to_pole',
             'fp1_gap_to_fastest',
             'team_quali_rank',
@@ -375,19 +409,34 @@ class EnhancedDataPreparer:
             'sector_consistency',
             'fp1_to_quali_improvement',
             'grid_to_race_change',
-            'overtaking_ability'
+            'overtaking_ability',
+            
+            # Nuevas features de alta prioridad
+            'avg_position',              # Correlación 0.832 - Habilidad histórica piloto
+            'total_laps',                # Correlación 0.329 - Fiabilidad/DNF indicator
+            'avg_tyre_life',             # Correlación 0.190 - Estrategia neumáticos
+            'position_changes',          # Correlación 0.184 - Habilidad adelantamiento
+            
+            # Features de clasificación detallada
+            'fp3_best_time',             # Rendimiento pre-carrera más reciente
+            'q1_time',                   # Tiempo en Q1
+            'q2_time',                   # Tiempo en Q2
+            'q3_time',                   # Tiempo en Q3
+            'grid_position'              # Mantener como backup/comparación
         ]
         
-        print(f"   🔧 Asegurando 20 features para compatibilidad con modelos...")
+        print(f"   🔧 Asegurando {len(target_features)} features para compatibilidad con modelos...")
         
-        # Crear DataFrame con todas las features necesarias
+        # Crear DataFrame con todas las features necesarias preservando datos existentes
         result = pd.DataFrame(index=X.index)
         
         for feature in target_features:
             if feature in X.columns:
+                # PRESERVAR datos existentes - NO sobrescribir
                 result[feature] = X[feature]
+                print(f"     ✅ {feature}: datos reales preservados")
             else:
-                # Crear feature faltante con valor por defecto inteligente
+                # Solo crear features que realmente faltan
                 if 'position' in feature:
                     default_value = 10.0  # Posición media
                 elif 'temp' in feature:
@@ -410,12 +459,16 @@ class EnhancedDataPreparer:
                     default_value = 0.5   # Valor medio
                 elif 'change' in feature or 'ability' in feature:
                     default_value = 0.0   # Neutro
+                elif 'laps' in feature:
+                    default_value = 58.0  # Vueltas promedio F1
+                elif 'tyre' in feature or 'life' in feature:
+                    default_value = 25.0  # Vida neumático promedio
                 else:
                     default_value = 0.0   # Genérico
                 
                 result[feature] = default_value
                 print(f"     🆕 {feature}: creada con valor {default_value}")
         
-        print(f"   ✅ Features finales: {len(result.columns)} (objetivo: 20)")
+        print(f"   ✅ Features finales: {len(result.columns)} (objetivo: {len(target_features)})")
         
         return result
