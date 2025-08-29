@@ -16,6 +16,7 @@ class DataPreparer:
     def prepare_training_data(self, data):
         """Prepara datos completos para entrenamiento"""
         print("🔄 Preparando datos para entrenamiento...")
+        print("🔍 DEBUG: Iniciando prepare_training_data")
         
         if data is None or data.empty:
             print("❌ No hay datos disponibles para preparar")
@@ -112,18 +113,32 @@ class DataPreparer:
         # MOSTRAR HEAD DEL DATASET ANTES DEL ENTRENAMIENTO (PARA DEBUG)
         #self._show_dataset_head(X_final, y_final, training_data_clean)
         
-        # 7. Dividir en entrenamiento y test
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_final, y_final, test_size=0.2, random_state=42
+        # 7. Dividir en entrenamiento y test (preservando índices, mezclando años)
+        train_indices, test_indices = train_test_split(
+            range(len(X_final)), test_size=0.2, random_state=42, shuffle=True
         )
+        
+        X_train = X_final.iloc[train_indices].reset_index(drop=True)
+        X_test = X_final.iloc[test_indices].reset_index(drop=True)
+        y_train = y_final.iloc[train_indices].reset_index(drop=True)
+        y_test = y_final.iloc[test_indices].reset_index(drop=True)
         
         print(f"📊 División de datos completada:")
         print(f"   🎯 Entrenamiento: {X_train.shape[0]} muestras")
         print(f"   🧪 Test: {X_test.shape[0]} muestras")
         print(f"   🔢 Total características: {X_train.shape[1]}")
         
+        print("🔍 DEBUG: Antes de guardar índices")
+        
         # Guardar nombres de características
         self.feature_names = list(X_train.columns)
+        
+        # Guardar índices para mapeo posterior
+        self.train_indices = train_indices
+        self.test_indices = test_indices
+        
+        print(f"🔍 DEBUG: Índices guardados - train: {len(train_indices)}, test: {len(test_indices)}")
+        print("🔍 DEBUG: Terminando prepare_training_data")
         
         return X_train, X_test, y_train, y_test, self.feature_names
     

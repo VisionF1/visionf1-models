@@ -7,9 +7,10 @@ import numpy as np
 from app.core.predictors.random_forest import RandomForestPredictor
 from app.core.predictors.xgboost_model import XGBoostPredictor
 from app.core.predictors.gradient_boosting import GradientBoostingPredictor
+from app.config import DATA_IMPORTANCE
 
 class ModelTrainer:
-    def __init__(self, use_time_series_cv=True):
+    def __init__(self, use_time_series_cv=False):
         self.use_time_series_cv = use_time_series_cv
         self.models = self._initialize_models_with_hyperparams()
         self.results = {}
@@ -19,11 +20,11 @@ class ModelTrainer:
             'RandomForest': {
                 'model_class': RandomForestPredictor,
                 'param_grid': {
-                    'n_estimators': [50, 100],      # Solo 2 opciones
-                    'max_depth': [3, 4],            # Solo 2 opciones
-                    'min_samples_split': [10, 20],  # Solo 2 opciones
-                    'min_samples_leaf': [5, 10],    # Solo 2 opciones
-                    'max_features': ['sqrt', 0.5],  # Solo 2 opciones
+                    'n_estimators': [50, 100],
+                    'max_depth': [2, 3],
+                    'min_samples_split': [20, 30],
+                    'min_samples_leaf': [10, 15],
+                    'max_features': ['sqrt', 0.5],
                     'bootstrap': [True],            # Fijo
                     'oob_score': [True]             # Fijo - TOTAL: 2^5 = 32 combinaciones
                 }
@@ -31,37 +32,52 @@ class ModelTrainer:
             'XGBoost': {
                 'model_class': XGBoostPredictor,
                 'param_grid': {
-                    'n_estimators': [50, 100],      # Solo 2 opciones
-                    'max_depth': [3, 4],            # Solo 2 opciones  
-                    'learning_rate': [0.05, 0.1],  # Solo 2 opciones
-                    'subsample': [0.7, 0.8],       # Solo 2 opciones
-                    'colsample_bytree': [0.7, 0.8], # Solo 2 opciones
-                    'reg_alpha': [0.1, 0.5],       # Solo 2 opciones
-                    'reg_lambda': [0.1, 0.5],      # Solo 2 opciones
-                    'min_child_weight': [3, 5]     # Solo 2 opciones - TOTAL: 2^8 = 256 combinaciones
+                    'n_estimators': [50, 100],
+                    'max_depth': [2, 3],
+                    'learning_rate': [0.05, 0.1],
+                    'subsample': [0.6, 0.8],
+                    'colsample_bytree': [0.6, 0.8],
+                    'reg_alpha': [1.0, 2.0],
+                    'reg_lambda': [1.0, 2.0],
+                    'min_child_weight': [5, 10]
                 }
             },
             'GradientBoosting': {
                 'model_class': GradientBoostingPredictor,
                 'param_grid': {
-                    'n_estimators': [30, 50],       # Solo 2 opciones
-                    'max_depth': [2, 3],            # Solo 2 opciones
-                    'learning_rate': [0.05, 0.1],  # Solo 2 opciones
-                    'subsample': [0.7, 0.8],       # Solo 2 opciones
-                    'min_samples_split': [15, 25],  # Solo 2 opciones
-                    'min_samples_leaf': [8, 12],    # Solo 2 opciones
-                    'max_features': ['sqrt', 0.5],  # Solo 2 opciones
+                    'n_estimators': [30, 50],
+                    'max_depth': [2, 3],
+                    'learning_rate': [0.05, 0.1],
+                    'subsample': [0.6, 0.8],
+                    'min_samples_split': [20, 30],
+                    'min_samples_leaf': [10, 14],
+                    'max_features': ['sqrt', 0.5],
                     'validation_fraction': [0.1]    # Fijo - TOTAL: 2^7 = 128 combinaciones
                 }
             }
         }
 
-    def train_all_models(self, X_train, X_test, y_train, y_test, label_encoder, feature_names):
-        print("\U0001F682 Entrenando modelos con Cross-Validation...")
+    def train_all_models(self, X_train, X_test, y_train, y_test, label_encoder, feature_names, df_original=None, train_indices=None):
+        print("Entrenando modelos con Cross-Validation...")
 
         if X_train is None or y_train is None:
             print("❌ No hay datos para entrenar")
             return {}
+
+        # 📅 CALCULAR PESOS POR AÑOS
+        sample_weights = None
+        if df_original is not None and 'year' in df_original.columns and train_indices is not None:
+            print("📅 Aplicando pesos por años a los datos de entrenamiento...")
+            # Usar los índices correctos para obtener los datos de entrenamiento
+            df_train = df_original.iloc[train_indices]
+            sample_weights = self.calculate_year_weights(df_train)
+        elif df_original is not None and 'year' in df_original.columns:
+            print("📅 Aplicando pesos por años (sin índices, asumiendo orden)...")
+            # Fallback: asumir que los primeros registros son de entrenamiento
+            df_train = df_original.iloc[:len(X_train)]
+            sample_weights = self.calculate_year_weights(df_train)
+        else:
+            print("⚠️ No se encontraron datos de años, usando pesos uniformes")
 
         # 🛡️ DETECCIÓN Y CORRECCIÓN DE OVERFITTING
         print("🛡️ Aplicando estrategias anti-overfitting...")
@@ -84,7 +100,7 @@ class ModelTrainer:
             print(f"{'='*50}")
 
             self._train_single_model_with_cv(
-                name, model_config, X_train, X_test, y_train, y_test, cv_splitter
+                name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights
             )
 
         self._show_detailed_comparison()
@@ -139,16 +155,12 @@ class ModelTrainer:
 
     def _get_cv_splitter(self, X_train):
         n_samples = len(X_train)
-        if self.use_time_series_cv and n_samples > 10:
-            n_splits = min(5, n_samples // 5)
-            print(f"📊 Usando TimeSeriesSplit con {n_splits} splits")
-            return TimeSeriesSplit(n_splits=n_splits)
-        else:
-            n_splits = min(3, n_samples // 5)
-            print(f"📊 Usando KFold con {n_splits} splits")
-            return KFold(n_splits=n_splits, shuffle=True, random_state=42)
+        # Usar KFold por defecto (sin dependencia temporal)
+        n_splits = max(3, min(5, n_samples // 5))
+        print(f"📊 Usando KFold con {n_splits} splits")
+        return KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-    def _train_single_model_with_cv(self, name, model_config, X_train, X_test, y_train, y_test, cv_splitter):
+    def _train_single_model_with_cv(self, name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights=None):
         try:
             model_class = model_config['model_class']
             base_model = model_class()
@@ -178,13 +190,15 @@ class ModelTrainer:
                         n_jobs=-1,
                         verbose=0
                     )
-
-                    print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
                     combinations = self._get_param_combinations(model_config['param_grid'])
                     print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
-                    grid_search.fit(X_train, y_train)
                     
-                    # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
+                    # Aplicar sample_weights si están disponibles
+                    if sample_weights is not None:
+                        grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+                    else:
+                        grid_search.fit(X_train, y_train)
+                    
                     self._show_hyperparameter_search_details(grid_search, name)
                     
                     best_model = grid_search.best_estimator_
@@ -205,7 +219,12 @@ class ModelTrainer:
                     print(f"🔍 DEBUG: param_grid = {model_config['param_grid']}")
                     combinations = self._get_param_combinations(model_config['param_grid'])
                     print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
-                    grid_search.fit(X_train, y_train)
+                    
+                    # Aplicar sample_weights si están disponibles
+                    if sample_weights is not None:
+                        grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+                    else:
+                        grid_search.fit(X_train, y_train)
                     
                     # 📊 MOSTRAR DETALLES DE LA BÚSQUEDA DE HIPERPARÁMETROS
                     self._show_hyperparameter_search_details(grid_search, name)
@@ -363,8 +382,6 @@ class ModelTrainer:
 
     def _show_hyperparameter_search_details(self, grid_search, model_name):
         """Muestra detalles detallados de la búsqueda de hiperparámetros"""
-        print(f"\n🔬 ANÁLISIS DETALLADO DE HIPERPARÁMETROS - {model_name}")
-        print("-" * 60)
         
         # Obtener todos los resultados
         results_df = pd.DataFrame(grid_search.cv_results_)
@@ -566,3 +583,35 @@ class ModelTrainer:
             
         except Exception as e:
             print(f"❌ Error guardando resumen: {e}")
+
+    def calculate_year_weights(self, df_with_years):
+        """
+        Calcula pesos para las muestras basándose en el año
+        Datos más recientes tienen mayor peso
+        """
+        if 'year' not in df_with_years.columns:
+            print("⚠️ No se encontró columna 'year', usando pesos uniformes")
+            return np.ones(len(df_with_years))
+        
+        # Mapeo de años a pesos según configuración
+        year_weights_map = {
+            2025: DATA_IMPORTANCE.get("2025_weight", 0.50),
+            2024: DATA_IMPORTANCE.get("2024_weight", 0.25), 
+            2023: DATA_IMPORTANCE.get("2023_weight", 0.15),
+            2022: DATA_IMPORTANCE.get("2022_weight", 0.10)
+        }
+        
+        # Calcular pesos para cada fila
+        weights = df_with_years['year'].map(year_weights_map).fillna(0.05)  # peso mínimo para años no definidos
+        
+        # Normalizar para que la suma sea igual al número de muestras
+        weights = weights * len(weights) / weights.sum()
+        
+        print(f"📅 Pesos aplicados por año:")
+        year_counts = df_with_years['year'].value_counts().sort_index()
+        for year in sorted(year_counts.index):
+            weight = year_weights_map.get(year, 0.05)
+            count = year_counts[year]
+            print(f"   {year}: {weight:.1%} peso × {count} muestras")
+        
+        return weights.values

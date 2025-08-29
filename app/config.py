@@ -11,9 +11,9 @@ RACE_RANGE = {
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "Hungarian Grand Prix", 
-        "circuit_name": "Hungaroring",
-        "race_number": 13  # Número de carrera en la temporada 2025
+        "race_name": "United States GP", 
+        "circuit_name": "Circuit of the Americas",
+        "race_number": 19  # Número de carrera en la temporada 2025
     },
     "use_historical_data": True,
     
@@ -71,61 +71,56 @@ PREDICTION_CONFIG = {
 
 }
 
-# 🔥 FACTOR DE IMPORTANCIA DE DATOS (SIMPLE)
+# � PESOS POR AÑOS - Importancia temporal de los datos
 DATA_IMPORTANCE = {
-
-    "2025_weight": 0.50,  # 50% importancia a datos de 2025
-    "2024_weight": 0.25,  # 25% importancia a datos de 2024
-    "2023_weight": 0.15,  # 15% importancia a datos de 2023
-    "2022_weight": 0.10,  # 10% importancia a datos de 2022
-
-    "ml_vs_config": {
-        "ml_weight": 0.80,     # 80% modelo ML (histórico) - MÁS LIBERTAD
-        "config_weight": 0.20   # 20% configuración 2025 (actual) - MENOS RESTRICCIÓN
-    }
+    "2025_weight": 0.50,  # 50% - Datos más recientes (máxima importancia)
+    "2024_weight": 0.30,  # 30% - Año anterior (alta importancia)
+    "2023_weight": 0.15,  # 15% - Hace 2 años (media importancia)
+    "2022_weight": 0.05,  # 5% - Hace 3 años (baja importancia)
 }
 
-# Solo pilotos activos 2025 - SIN TIERS HARDCODEADOS
+# Solo pilotos activos 2025
 DRIVERS_2025 = {
-    # McLaren 🏆
-    "NOR": {"team": "McLaren", "expected_range": (1, 4)},
-    "PIA": {"team": "McLaren", "expected_range": (1, 6)},
+    # Red Bull
+    "VER": {"team": "Red Bull Racing"},
+    "TSU": {"team": "Red Bull Racing", "team_change": True},
+
+    # Ferrari
+    "LEC": {"team": "Ferrari"},
+    "HAM": {"team": "Ferrari", "team_change": True},
     
-    # Ferrari 🥈  
-    "LEC": {"team": "Ferrari", "expected_range": (2, 8)},
-    "HAM": {"team": "Ferrari", "expected_range": (3, 10), "team_change": True},
+    # McLaren
+    "NOR": {"team": "McLaren"},
+    "PIA": {"team": "McLaren"},
     
-    # Red Bull 🥈
-    "VER": {"team": "Red Bull Racing", "expected_range": (1, 6)},
-    "TSU": {"team": "Red Bull Racing", "expected_range": (8, 15), "team_change": True},
     
-    # Mercedes 🥉
-    "RUS": {"team": "Mercedes", "expected_range": (4, 10)},
-    "ANT": {"team": "Mercedes", "expected_range": (10, 16), "rookie": True},
+    # Mercedes
+    "RUS": {"team": "Mercedes"},
+    "ANT": {"team": "Mercedes", "rookie": True},
     
-    # Williams 📈
-    "ALB": {"team": "Williams", "expected_range": (8, 14)},
-    "SAI": {"team": "Williams", "expected_range": (10, 16), "team_change": True},
+    # Williams
+    "ALB": {"team": "Williams"},
+    "SAI": {"team": "Williams", "team_change": True},
     
     # Racing Bulls
-    "HAD": {"team": "Racing Bulls", "expected_range": (12, 18), "rookie": True},
-    "LAW": {"team": "Racing Bulls", "expected_range": (14, 20), "rookie": True},
+    "HAD": {"team": "Racing Bulls", "rookie": True},
+    "LAW": {"team": "Racing Bulls", "rookie": True},
     
-    # Aston Martin 📉
-    "ALO": {"team": "Aston Martin", "expected_range": (8, 16)},
-    "STR": {"team": "Aston Martin", "expected_range": (12, 18)},
+    # Aston Martin
+    "ALO": {"team": "Aston Martin"},
+    "STR": {"team": "Aston Martin"},
     
     # Haas
-    "OCO": {"team": "Haas", "expected_range": (10, 18), "team_change": True},
-    "BEA": {"team": "Haas", "expected_range": (15, 20), "rookie": True},
+    "OCO": {"team": "Haas", "team_change": True},
+    "BEA": {"team": "Haas", "rookie": True},
     
-    # Alpine 🔻
-    "GAS": {"team": "Alpine", "expected_range": (12, 20)},
-    "COL": {"team": "Alpine", "expected_range": (14, 20), "team_change": True},
+    # Alpine
+    "GAS": {"team": "Alpine"},
+    "COL": {"team": "Alpine", "team_change": True},
     
-    # Sauber 🔻
-    "HUL": {"team": "Sauber", "expected_range": (14, 20)},
-    "BOR": {"team": "Sauber", "expected_range": (16, 20), "rookie": True}
+    # Sauber
+    "HUL": {"team": "Sauber"},
+    "BOR": {"team": "Sauber", "rookie": True}
 }
 
 # 🔥 PENALIZACIONES SIMPLES
@@ -139,6 +134,12 @@ PENALTIES = {
 # Listas simples
 ROOKIES_2025 = ["ANT", "BEA", "BOR", "HAD", "LAW"]
 RETIRED_DRIVERS = ["PER", "MAG", "DOO", "RIC", "BOT", "ZHO", "SAR"]
+
+
+
+VALID_TEAMS = ['Alpine', 'Aston Martin', 'Ferrari', 'Haas F1 Team', 'Kick Sauber', 
+                      'McLaren', 'Mercedes', 'Racing Bulls', 'Red Bull Racing', 'Williams']
+        
 
 # 🔥 CONFIGURACIÓN SIMPLE DE ADAPTACIÓN
 ADAPTATION_SYSTEM = {

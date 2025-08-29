@@ -1,474 +1,470 @@
 """
-Enhanced Data Preparer con Feature Engineering Avanzado
+Enhanced Data Preparer con Feature Engineering Avanzado (pre-race safe)
 Integra el feature engineering avanzado en el pipeline de preparación de datos
 """
 
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
+import os
 import warnings
-warnings.filterwarnings('ignore')
+from typing import Optional, List
 
-# Importar el feature engineer avanzado
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
+
+from app.config import VALID_TEAMS, DATA_IMPORTANCE
 from app.core.features.advanced_feature_engineer import AdvancedFeatureEngineer
 
+warnings.filterwarnings('ignore')
+
+
+def debug_print_df(df: pd.DataFrame, cols: Optional[List[str]] = None, title: str = "🔍 Debug DataFrame"):
+    if os.getenv('VISIONF1_DEBUG', '0') != '1':
+        return
+    prev = (
+        pd.get_option('display.max_columns'),
+        pd.get_option('display.width'),
+        pd.get_option('display.max_colwidth'),
+        pd.get_option('display.max_rows'),
+    )
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', None)
+    pd.set_option('display.max_colwidth', None)
+    pd.set_option('display.max_rows', None)
+    print("\n" + title)
+    print(df.head())
+    num = (df[cols] if cols else df).select_dtypes(include=[np.number])
+    stats = num.agg(['mean', 'min', 'max']).T if len(df) <= 1 else num.describe().T
+    print(stats)
+    pd.set_option('display.max_columns', prev[0])
+    pd.set_option('display.width', prev[1])
+    pd.set_option('display.max_colwidth', prev[2])
+    pd.set_option('display.max_rows', prev[3])
+
+
 class EnhancedDataPreparer:
-    def __init__(self, use_advanced_features=True):
-        self.use_advanced_features = use_advanced_features
-        self.feature_engineer = AdvancedFeatureEngineer() if use_advanced_features else None
+    def __init__(self, quiet: bool = False):
+        self.quiet = quiet
+        self.feature_engineer = AdvancedFeatureEngineer(quiet=self.quiet)
         self.label_encoder = LabelEncoder()
-        self.feature_names = []
-        
-    def prepare_enhanced_features(self, df):
-        """Prepara features usando el pipeline mejorado"""
-        print("\n🚀 PREPARANDO FEATURES MEJORADAS")
-        print("=" * 50)
-        
+        self.feature_names: List[str] = []
+        self.use_advanced_features = True
+        self.year_weights = {
+            2022: DATA_IMPORTANCE.get("2022_weight", 0.10),
+            2023: DATA_IMPORTANCE.get("2023_weight", 0.15),
+            2024: DATA_IMPORTANCE.get("2024_weight", 0.30),
+            2025: DATA_IMPORTANCE.get("2025_weight", 0.50),
+        }
+        self.sample_years: Optional[pd.Series] = None
+        self.train_years: Optional[pd.Series] = None
+        self.test_years: Optional[pd.Series] = None
+        self.train_indices = None
+        self.test_indices = None
+
+    def _log(self, msg: str):
+        if self.quiet and os.getenv('VISIONF1_DEBUG', '0') != '1':
+            return
+        print(msg)
+
+    def prepare_enhanced_features(self, df: pd.DataFrame):
         original_shape = df.shape
-        print(f"📊 Datos originales: {original_shape}")
-        
-        # 1. Aplicar feature engineering avanzado si está habilitado
-        if self.use_advanced_features and self.feature_engineer:
-            print(f"\n🔧 Aplicando feature engineering avanzado...")
-            df = self.feature_engineer.create_all_advanced_features(df)
-            print(f"   ✅ Features avanzadas creadas")
-        
-        # 2. Mapeo histórico de equipos (como antes)
-        print(f"\n🏎️  Aplicando mapeo histórico de equipos...")
+        self._log(f"📊 Datos originales: {original_shape}")
+
+        # 1) Normalizar equipos
+        self._log("\nAplicando mapeo histórico de equipos...")
         df = self._apply_team_mapping(df)
-        
-        # 3. Filtrar registros sin equipo válido
-        print(f"\n🔄 Filtrando registros sin equipo válido...")
-        valid_teams = ['Alpine', 'Aston Martin', 'Ferrari', 'Haas F1 Team', 'Kick Sauber', 
-                      'McLaren', 'Mercedes', 'Racing Bulls', 'Red Bull Racing', 'Williams']
-        
+
+        # 2) Filtrar equipos válidos
         before_filter = len(df)
-        df = df[df['team'].isin(valid_teams)]
+        df = df[df['team'].isin(VALID_TEAMS)]
         after_filter = len(df)
-        
-        if before_filter > after_filter:
-            print(f"   🗑️  {before_filter - after_filter} registros eliminados (sin equipo válido)")
-        print(f"   ✅ {after_filter} registros restantes con equipos válidos")
-        
-        # 4. Preparar características base + avanzadas
-        print(f"\n🔧 Preparando características finales...")
-        
-        # Features base esenciales
-        base_features = [
-            'team_encoded',
-            'driver_encoded',           # NUEVO: Identidad del piloto
-            'grid_position',
-            'quali_position',           # NUEVO: Mejor que grid_position
-            'quali_best_time', 
-            'race_best_lap_time',
-            'clean_air_pace',
-            'avg_position',             # NUEVO: Habilidad histórica piloto
-            'total_laps',               # NUEVO: Fiabilidad/DNF
-            'avg_tyre_life',            # NUEVO: Estrategia neumáticos
-            'position_changes',         # NUEVO: Habilidad adelantamiento
-            'fp3_best_time',            # NUEVO: Rendimiento pre-carrera
-            'q1_time',                  # NUEVO: Clasificación Q1
-            'q2_time',                  # NUEVO: Clasificación Q2
-            'q3_time'                   # NUEVO: Clasificación Q3
-        ]
-        
-        # Features meteorológicas
-        weather_features = [
-            'session_air_temp',
-            'session_track_temp', 
-            'session_humidity',
-            'session_rainfall'
-        ]
-        
-        # Features de performance histórico del equipo
-        historical_features = [
-            'team_avg_position_2024',
-            'team_avg_position_2023', 
-            'team_avg_position_2022'
-        ]
-        
-        # Combinar todas las features disponibles
-        all_features = base_features + weather_features + historical_features
-        
-        # Agregar features avanzadas si están disponibles
-        if self.use_advanced_features and self.feature_engineer:
-            created_features = [f for f in self.feature_engineer.created_features if f in df.columns]
-            # Seleccionar features específicas solicitadas
-            priority_advanced_features = [
-                f for f in created_features if any(x in f for x in [
-                    'quali_gap_to_pole',           # Performance relativo
-                    'fp1_gap_to_fastest',          # Performance relativo
-                    'team_quali_rank',             # Performance relativo
-                    'avg_position_last_3',         # Momentum (con manejo de valores por defecto)
-                    'points_last_3',               # Momentum
-                    'heat_index',                  # Weather básico
-                    'weather_difficulty_index',    # Weather avanzado
-                    'team_track_avg_position',     # Compatibilidad circuito
-                    'fp1_to_quali_improvement',    # Consistencia
-                    'sector_consistency',          # Sectores/velocidad
-                    'grid_to_race_change',         # Estratégico
-                    'overtaking_ability'           # Estratégico
+        self._log(f"   🗑️  Eliminados {before_filter - after_filter} registros sin equipo válido")
+        self._log(f"   ✅ Registros restantes: {after_filter}")
+
+        # 3) Feature engineering avanzado (pre-race safe ya en engineer)
+        self._log("\n🔧 Aplicando feature engineering avanzado (pre-race safe)...")
+        df = self.feature_engineer.create_all_advanced_features(df)
+
+        # 4) Definir conjuntos de features
+        base_features = ['team_encoded', 'driver_encoded', 'total_laps', 'fp3_best_time']
+        weather_features = ['session_air_temp', 'session_track_temp', 'session_humidity', 'session_rainfall']
+        historical_features = ['team_avg_position_2024', 'team_avg_position_2023', 'team_avg_position_2022']
+        race_weekend_features = ['expected_grid_position', 'fp3_rank', 'overtaking_ability', 'fp_time_consistency', 'fp_time_improvement']
+
+        all_features: List[str] = base_features + weather_features + historical_features
+        all_features.extend([f for f in race_weekend_features if f in df.columns])
+
+        if self.use_advanced_features:
+            created = [f for f in self.feature_engineer.created_features if f in df.columns]
+            advanced_safe = [
+                f for f in created if any(x in f for x in [
+                    'fp1_gap_to_fastest', 'avg_position_last_3', 'avg_quali_last_3', 'points_last_3',
+                    'heat_index', 'temp_deviation_from_ideal', 'weather_difficulty_index', 'team_track_avg_position',
+                    'sector', 'driver_rain_advantage', 'driver_skill_factor', 'team_strength_factor', 'driver_team_synergy',
+                    'driver_competitiveness', 'team_competitiveness', 'driver_weather_skill', 'overtaking_ability',
+                    'fp_time_consistency', 'fp_time_improvement', 'driver_track_avg_position', 'expected_grid_position', 'fp3_rank'
                 ])
             ]
-            all_features.extend(priority_advanced_features)
-        
-        # Filtrar features que existen en el DataFrame
-        available_features = [f for f in all_features if f in df.columns]
-        
-        print(f"   📊 Features base disponibles: {len([f for f in base_features if f in df.columns])}")
-        print(f"   🌤️  Features meteorológicas: {len([f for f in weather_features if f in df.columns])}")
-        print(f"   📈 Features históricas: {len([f for f in historical_features if f in df.columns])}")
-        
-        if self.use_advanced_features:
-            advanced_count = len([f for f in available_features if f not in base_features + weather_features + historical_features])
-            print(f"   🚀 Features avanzadas seleccionadas: {advanced_count}")
-        
-        # 5. Procesar team encoding
+            all_features.extend(advanced_safe)
+
+        # Encoding de team
         if 'team' in df.columns:
             df['team_encoded'] = self.label_encoder.fit_transform(df['team'])
-            unique_teams_final = df['team'].nunique()
-            print(f"   ✅ team_encoded: {unique_teams_final} equipos únicos (sin Unknown)")
-        
-        # 5.5. Procesar driver encoding (IMPORTANTE!)
+            self._log(f"   ✅ team_encoded: {df['team'].nunique()} equipos únicos")
+
+        # Encoding de driver
         if 'driver' in df.columns:
-            from sklearn.preprocessing import LabelEncoder
-            driver_encoder = LabelEncoder()
-            df['driver_encoded'] = driver_encoder.fit_transform(df['driver'])
-            unique_drivers = df['driver'].nunique()
-            print(f"   ✅ driver_encoded: {unique_drivers} pilotos únicos")
-        
-        # 6. Calcular performance histórico de equipos
+            from pathlib import Path
+            import pickle
+            enc_path = Path("app/models_cache/label_encoder.pkl")
+            if enc_path.exists():
+                try:
+                    with open(enc_path, 'rb') as f:
+                        driver_encoder = pickle.load(f)
+                    if len(getattr(driver_encoder, 'classes_', [])) > 15:
+                        self._log("   🔧 Usando encoder de pilotos guardado")
+                        df['driver_encoded'] = -1
+                        known = [d for d in df['driver'].unique() if d in driver_encoder.classes_]
+                        for d in known:
+                            df.loc[df['driver'] == d, 'driver_encoded'] = driver_encoder.transform([d])[0]
+                        df = df[df['driver_encoded'] != -1].copy()
+                        self.label_encoder = driver_encoder
+                    else:
+                        raise ValueError("Encoder guardado no parece de pilotos")
+                except Exception as e:
+                    self._log(f"   ⚠️ Encoder guardado inválido: {e}. Creando nuevo...")
+                    df['driver_encoded'] = LabelEncoder().fit_transform(df['driver'])
+                    self.label_encoder = LabelEncoder().fit(df['driver'])
+            else:
+                df['driver_encoded'] = LabelEncoder().fit_transform(df['driver'])
+                self.label_encoder = LabelEncoder().fit(df['driver'])
+            self._log(f"   ✅ driver_encoded: {df['driver'].nunique()} pilotos únicos")
+
+        # 5) Performance histórico y derivados driver/team
         df = self._calculate_team_historical_performance(df)
-        
-        # 7. Procesar características meteorológicas
-        df = self._process_weather_features(df)
-        
-        # 8. Crear X e y con features dinámicas
-        # Incluir features codificadas que se crearon dinámicamente
-        dynamic_features = []
+        df = self._create_driver_team_derived_features(df)
+
+        derived_features = [
+            'driver_competitiveness', 'team_competitiveness', 'driver_skill_factor', 'team_strength_factor',
+            'driver_team_synergy', 'driver_weather_skill', 'driver_rain_advantage'
+        ]
+        all_features.extend([f for f in derived_features if f in df.columns])
+
+        # 6) Selección final de features
+        available = [f for f in all_features if f in df.columns]
+        self._log(f"   📊 Base: {len([f for f in base_features if f in df.columns])} | Meteo: {len([f for f in weather_features if f in df.columns])} | Hist: {len([f for f in historical_features if f in df.columns])}")
+        if self.use_advanced_features:
+            adv_count = len([f for f in available if f not in base_features + weather_features + historical_features])
+            self._log(f"   🚀 Avanzadas seguras: {adv_count}")
+
+        # 7) Construir X
+        dynamic = []
         if 'team_encoded' in df.columns:
-            dynamic_features.append('team_encoded')
+            dynamic.append('team_encoded')
         if 'driver_encoded' in df.columns:
-            dynamic_features.append('driver_encoded')
-        
-        # Combinar features disponibles con las dinámicas
-        final_features = available_features + dynamic_features
+            dynamic.append('driver_encoded')
+        final_features: List[str] = []
+        seen = set()
+        for c in (available + dynamic):
+            if c not in seen:
+                final_features.append(c)
+                seen.add(c)
         X = df[final_features].copy()
-        
-        # Asegurar que tengamos exactamente las features que necesitamos
         X = self._ensure_31_features(X)
-        
-        # 9. Preparar variable objetivo
+
+        # Años para export
+        if 'year' in df.columns:
+            try:
+                self.sample_years = pd.to_numeric(df.loc[X.index, 'year'], errors='coerce')
+            except Exception:
+                self.sample_years = df.loc[X.index, 'year']
+
+        # 8) Target y limpieza
         target_columns = ['final_position', 'race_position', 'position']
-        target_col = None
         y = None
-        
+        target_col = None
         for col in target_columns:
             if col in df.columns:
-                target_col = col
                 y = df[col].copy()
+                target_col = col
                 break
-                
-        if y is not None:
-            print(f"   ✅ Variable objetivo preparada: {target_col}")
-            print(f"   📊 Rango: {y.min()} - {y.max()}")
-        else:
-            print(f"   ❌ No se encontró ninguna variable objetivo en: {target_columns}")
-            print(f"   📊 Columnas disponibles: {[col for col in df.columns if 'position' in col.lower()]}")
+        if y is None:
+            self._log(f"   ❌ No se encontró variable objetivo en: {target_columns}")
             return None, None, None, None
-        
-        self.feature_names = available_features
-        
-        print(f"\n📏 Sincronizando datos: X{X.shape}, y{len(y)}")
-        
-        # 10. Limpiar datos faltantes
+        self._log(f"   ✅ Target: {target_col}")
+
         X, y = self._clean_missing_data(X, y)
-        
-        final_shape = X.shape
-        print(f"\n✅ FEATURES MEJORADAS COMPLETADAS")
-        print(f"   📊 Shape final: {final_shape}")
-        print(f"   🎯 Features totales: {final_shape[1]}")
-        print(f"   📈 Incremento features: {final_shape[1] - len(base_features + weather_features + historical_features)}")
-        
+        self.feature_names = list(X.columns)
+        self._log(f"\n✅ FEATURES MEJORADAS COMPLETADAS | X{X.shape} y{len(y)}")
+        debug_print_df(X, title="🔍 X (pre-return) - enhanced_data_preparer")
         return X, y, self.label_encoder, self.feature_names
-    
-    def _apply_team_mapping(self, df):
-        """Aplica mapeo histórico de equipos"""
-        team_mapping = {
-            'AlphaTauri': 'Racing Bulls',
-            'Alpha Tauri': 'Racing Bulls', 
-            'RB': 'Racing Bulls',
-            'Alfa Romeo': 'Kick Sauber',
-            'Sauber': 'Kick Sauber',
+
+    def _apply_team_mapping(self, df: pd.DataFrame):
+        mapping = {
+            'AlphaTauri': 'Racing Bulls', 'Alpha Tauri': 'Racing Bulls', 'RB': 'Racing Bulls',
+            'Alfa Romeo': 'Kick Sauber', 'Sauber': 'Kick Sauber',
             'Aston Martin Aramco Cognizant F1 Team': 'Aston Martin',
             'Mercedes-AMG Petronas F1 Team': 'Mercedes',
             'Oracle Red Bull Racing': 'Red Bull Racing',
             'Red Bull Racing Honda RBPT': 'Red Bull Racing',
-            'Scuderia Ferrari': 'Ferrari',
-            'McLaren F1 Team': 'McLaren',
-            'BWT Alpine F1 Team': 'Alpine',
-            'Williams Racing': 'Williams',
-            'MoneyGram Haas F1 Team': 'Haas F1 Team',
-            # Mapeos adicionales para configuraciones
-            'Haas': 'Haas F1 Team',
-            'Kick Sauber': 'Kick Sauber'  # Mantener nombre si ya es correcto
+            'Scuderia Ferrari': 'Ferrari', 'McLaren F1 Team': 'McLaren',
+            'BWT Alpine F1 Team': 'Alpine', 'Williams Racing': 'Williams',
+            'MoneyGram Haas F1 Team': 'Haas F1 Team', 'Haas': 'Haas F1 Team',
+            'Kick Sauber': 'Kick Sauber'
         }
-        
         if 'team' in df.columns:
-            df['team'] = df['team'].replace(team_mapping)
-            unique_teams = df['team'].nunique()
-            print(f"   ✅ Equipos después del mapeo: {unique_teams} equipos únicos")
-            
-            # Mostrar equipos válidos
-            valid_teams = sorted(df['team'].dropna().unique())
-            print(f"   🏎️ Equipos: {', '.join(valid_teams)}")
-        
+            df['team'] = df['team'].replace(mapping)
+            self._log(f"   ✅ Equipos tras mapeo: {df['team'].nunique()} únicos")
         return df
-    
-    def _calculate_team_historical_performance(self, df):
-        """Calcula performance histórico de equipos"""
+
+    def _calculate_team_historical_performance(self, df: pd.DataFrame):
         if 'team' in df.columns and 'race_position' in df.columns and 'year' in df.columns:
-            print(f"   ✅ Performance histórico calculado para {len(df)} registros con equipo")
-            
-            # Performance por año
+            self._log("   🔢 Calculando performance histórico de equipos...")
             for year in [2024, 2023, 2022]:
-                col_name = f'team_avg_position_{year}'
+                col = f'team_avg_position_{year}'
                 year_data = df[df['year'] == year]
                 if len(year_data) > 0:
-                    team_performance = year_data.groupby('team')['race_position'].mean()
-                    df[col_name] = df['team'].map(team_performance).fillna(df['race_position'].mean())
+                    team_perf = year_data.groupby('team')['race_position'].mean()
+                    df[col] = df['team'].map(team_perf).fillna(df['race_position'].mean())
                 else:
-                    df[col_name] = df['race_position'].mean()
-        
+                    df[col] = df['race_position'].mean()
         return df
-    
-    def _process_weather_features(self, df):
-        """Procesa características meteorológicas"""
-        weather_cols = ['session_air_temp', 'session_track_temp', 'session_humidity', 'session_rainfall']
-        
-        print(f"   🌤️  Procesando condiciones meteorológicas:")
-        
-        for col in weather_cols:
-            if col in df.columns:
-                if col == 'session_rainfall':
-                    # Contar sesiones con lluvia
-                    rain_sessions = (df[col] > 0).sum() if df[col].dtype in [np.number] else (df[col] == True).sum()
-                    total_sessions = len(df)
-                    rain_percentage = (rain_sessions / total_sessions) * 100
-                    print(f"   ✅ {col}: {rain_sessions} sesiones con lluvia de {total_sessions} ({rain_percentage:.1f}%)")
-                else:
-                    # Para temperatura y humedad
-                    min_val = df[col].min()
-                    max_val = df[col].max()
-                    unit = '°C' if 'temp' in col else '%' if 'humidity' in col else ''
-                    print(f"   ✅ {col}: rango {min_val:.1f}{unit} - {max_val:.1f}{unit}")
-        
+
+    def _create_driver_team_derived_features(self, df: pd.DataFrame):
+        self._log("   🚀 Creando features derivadas driver/team (data-driven)...")
+        hist_df = df.copy()
+
+        if 'year' in hist_df.columns:
+            hist_df['year'] = pd.to_numeric(hist_df['year'], errors='coerce')
+            hist_df = hist_df[~hist_df['year'].isna()].copy()
+            hist_df['year'] = hist_df['year'].astype(int)
+
+        needed_cols = {'driver', 'team', 'year', 'race_position'}
+        if not needed_cols.issubset(hist_df.columns):
+            df['driver_competitiveness'] = df.get('driver_competitiveness', pd.Series(0.75, index=df.index))
+            df['team_competitiveness'] = df.get('team_competitiveness', pd.Series(0.65, index=df.index))
+            df['driver_weather_skill'] = df.get('driver_weather_skill', pd.Series(0.75, index=df.index))
+            df['driver_skill_factor'] = df['driver_competitiveness']
+            df['team_strength_factor'] = df['team_competitiveness']
+            df['driver_team_synergy'] = df['driver_competitiveness'] * df['team_competitiveness']
+            if 'session_rainfall' in df.columns:
+                try:
+                    rain = df['session_rainfall'].astype(float)
+                except Exception:
+                    rain = (df['session_rainfall'] == True).astype(float)
+                df['driver_rain_advantage'] = df['driver_weather_skill'] * rain
+            return df
+
+        unique_years = sorted(hist_df['year'].dropna().unique())
+
+        def entity_year_means(hdf: pd.DataFrame, entity_col: str, target: str) -> pd.DataFrame:
+            g = hdf.groupby([entity_col, 'year'])[target].mean().reset_index()
+            g.rename(columns={target: 'mean_position'}, inplace=True)
+            return g
+
+        def year_weight(y: int) -> float:
+            return float(self.year_weights.get(int(y), 0.05))
+
+        def build_prior_weighted_table(hdf: pd.DataFrame, entity_col: str, target: str, wet_only: bool = False) -> pd.DataFrame:
+            h = hdf.copy()
+            if wet_only and 'session_rainfall' in h.columns:
+                try:
+                    h = h[(h['session_rainfall'].astype(float) > 0)]
+                except Exception:
+                    h = h[(h['session_rainfall'] == True)]
+            means = entity_year_means(h, entity_col, target)
+            rows = []
+            ent_values = means[entity_col].unique()
+            all_years = sorted(means['year'].unique())
+            for cy in unique_years:
+                prev_years = [y for y in all_years if y < cy]
+                if not prev_years:
+                    continue
+                prev = means[means['year'].isin(prev_years)]
+                prev = prev.assign(year_weight=prev['year'].map(year_weight))
+                for ent in ent_values:
+                    ent_prev = prev[prev[entity_col] == ent]
+                    if len(ent_prev) == 0:
+                        continue
+                    w = ent_prev['year_weight'].sum()
+                    if w == 0:
+                        continue
+                    weighted_mean = (ent_prev['mean_position'] * ent_prev['year_weight']).sum() / w
+                    rows.append({entity_col: ent, 'current_year': cy, 'weighted_hist_pos': weighted_mean})
+            return pd.DataFrame(rows)
+
+        driver_prior = build_prior_weighted_table(hist_df, 'driver', 'race_position', wet_only=False)
+        team_prior = build_prior_weighted_table(hist_df, 'team', 'race_position', wet_only=False)
+        driver_wet_prior = build_prior_weighted_table(hist_df, 'driver', 'race_position', wet_only=True)
+
+        for tbl in (driver_prior, team_prior, driver_wet_prior):
+            if not tbl.empty and 'current_year' in tbl.columns:
+                try:
+                    tbl['current_year'] = pd.to_numeric(tbl['current_year'], errors='coerce').astype('Int64')
+                except Exception:
+                    pass
+
+        def inverse_minmax(series: pd.Series) -> pd.Series:
+            s = series.astype(float)
+            if s.empty:
+                return s
+            s_min, s_max = s.min(), s.max()
+            if s_max == s_min:
+                return pd.Series(0.5, index=series.index)
+            return (s_max - s) / (s_max - s_min)
+
+        df = df.copy()
+        if 'year' in df.columns:
+            df['year'] = pd.to_numeric(df['year'], errors='coerce')
+        df['current_year'] = df['year'].astype('Int64')
+
+        if not driver_prior.empty:
+            driver_prior = driver_prior.copy()
+            driver_prior['driver_competitiveness'] = inverse_minmax(driver_prior['weighted_hist_pos'])
+            df = df.merge(driver_prior[['driver', 'current_year', 'driver_competitiveness']], how='left', on=['driver', 'current_year'])
+        if not team_prior.empty:
+            team_prior = team_prior.copy()
+            team_prior['team_competitiveness'] = inverse_minmax(team_prior['weighted_hist_pos'])
+            df = df.merge(team_prior[['team', 'current_year', 'team_competitiveness']], how='left', on=['team', 'current_year'])
+        if not driver_wet_prior.empty:
+            driver_wet_prior = driver_wet_prior.copy()
+            driver_wet_prior['driver_weather_skill'] = inverse_minmax(driver_wet_prior['weighted_hist_pos'])
+            df = df.merge(driver_wet_prior[['driver', 'current_year', 'driver_weather_skill']], how='left', on=['driver', 'current_year'])
+
+        if 'driver_competitiveness' not in df.columns:
+            df['driver_competitiveness'] = 0.75
+        if 'team_competitiveness' not in df.columns:
+            df['team_competitiveness'] = 0.65
+        df['driver_competitiveness'] = df['driver_competitiveness'].fillna(0.5)
+        df['team_competitiveness'] = df['team_competitiveness'].fillna(0.5)
+        df['driver_weather_skill'] = df.get('driver_weather_skill', pd.Series(0.5, index=df.index)).fillna(0.5)
+
+        df['driver_skill_factor'] = df['driver_competitiveness']
+        df['team_strength_factor'] = df['team_competitiveness']
+        df['driver_team_synergy'] = df['driver_competitiveness'] * df['team_competitiveness']
+
+        if 'session_rainfall' in df.columns:
+            try:
+                rain = df['session_rainfall'].astype(float)
+            except Exception:
+                rain = (df['session_rainfall'] == True).astype(float)
+            df['driver_rain_advantage'] = df['driver_weather_skill'] * rain
+
+        if 'grid_to_race_change' in df.columns and 'driver_competitiveness' in df.columns:
+            df['adjusted_position_change'] = df['grid_to_race_change'] * df['driver_competitiveness']
+
+        df.drop(columns=['current_year'], inplace=True, errors='ignore')
+
+        if os.getenv('VISIONF1_DEBUG', '0') == '1':
+            try:
+                grp = df.groupby(['driver', 'team', 'year'])[['driver_skill_factor', 'team_strength_factor']].nunique()
+                offenders = grp[(grp['driver_skill_factor'] > 1) | (grp['team_strength_factor'] > 1)].reset_index()
+                self._log(f"   🔎 DEBUG factores por temporada: grupos con variación dentro del mismo año = {len(offenders)}")
+                if len(offenders) > 0:
+                    self._log(offenders.head(12).to_string(index=False))
+            except Exception:
+                pass
+
+        self._log("   ✅ Features derivadas driver/team creadas (data-driven)")
         return df
-    
-    def _clean_missing_data(self, X, y):
-        """Limpia datos faltantes"""
-        print(f"\n🧹 Limpiando datos...")
-        
-        # Identificar columnas con valores faltantes
+
+    def _process_weather_features(self, df: pd.DataFrame):
+        return df
+
+    def _clean_missing_data(self, X: pd.DataFrame, y: pd.Series):
+        self._log("\n🧹 Limpiando datos...")
         missing_info = X.isnull().sum()
-        columns_with_missing = missing_info[missing_info > 0]
-        
-        if len(columns_with_missing) > 0:
-            print(f"   📊 Valores faltantes encontrados:")
-            for col, missing_count in columns_with_missing.items():
-                percentage = (missing_count / len(X)) * 100
-                print(f"      {col}: {missing_count} ({percentage:.1f}%)")
-                
-                # Estrategias de imputación inteligente
+        cols_missing = missing_info[missing_info > 0]
+        if len(cols_missing) > 0:
+            for col, cnt in cols_missing.items():
                 if 'position' in col:
-                    # Para posiciones, usar mediana
                     X[col] = X[col].fillna(X[col].median())
-                elif 'temp' in col or 'humidity' in col:
-                    # Para datos meteorológicos, usar media
+                elif any(k in col for k in ['temp', 'humidity']):
                     X[col] = X[col].fillna(X[col].mean())
                 elif 'rainfall' in col:
-                    # Para lluvia, asumir sin lluvia
                     X[col] = X[col].fillna(0)
-                elif 'time' in col:
-                    # Para tiempos, usar mediana
+                elif any(k in col for k in ['time', 'pace']):
                     X[col] = X[col].fillna(X[col].median())
                 else:
-                    # Por defecto, usar mediana
                     X[col] = X[col].fillna(X[col].median())
-        
-        # Verificar que no queden NaN
-        remaining_nan = X.isnull().sum().sum()
-        if remaining_nan > 0:
-            print(f"   ⚠️  {remaining_nan} valores NaN restantes - rellenando con mediana")
-            X = X.fillna(X.median())
-        
-        # Sincronizar X e y (eliminar filas donde y es NaN)
-        valid_indices = ~y.isnull()
-        X = X[valid_indices]
-        y = y[valid_indices]
-        
-        print(f"   ✅ Datos limpios: {X.shape}")
-        
+        if X.isnull().sum().sum() > 0:
+            X = X.fillna(X.median(numeric_only=True))
+        valid = ~y.isnull()
+        X, y = X[valid], y[valid]
+        self._log(f"   ✅ Datos limpios: X{X.shape}")
         return X, y
-    
-    def get_feature_importance_summary(self):
-        """Devuelve resumen de importancia de features"""
-        if not self.use_advanced_features or not self.feature_engineer:
-            return "Feature engineering avanzado no está habilitado"
-        
-        groups = self.feature_engineer.get_feature_importance_groups()
-        summary = "\n🎯 RESUMEN DE FEATURES POR CATEGORÍA:\n"
-        
-        for category, features in groups.items():
-            available_features = [f for f in features if f in self.feature_names]
-            summary += f"   {category}: {len(available_features)} features\n"
-            
-        return summary
 
-    def prepare_training_data(self, df):
-        """
-        Prepara datos para entrenamiento usando el pipeline mejorado
-        Compatible con el pipeline principal
-        """
-        print("🚀 Preparando datos para entrenamiento con features avanzadas...")
-        
-        # Usar el método principal de preparación
-        result = self.prepare_enhanced_features(df)
-        
-        # El método devuelve 4 elementos: X, y, label_encoder, feature_names
-        if isinstance(result, tuple) and len(result) == 4:
-            X, y, label_encoder, feature_names = result
-        else:
-            print("❌ Error: formato de respuesta inesperado de prepare_enhanced_features")
-            return None, None, None, None, None
-        
-        if X is None:
-            print("❌ Error en preparación de features")
-            return None, None, None, None, None
-        
-        if y is None:
-            print("❌ No se encontró variable objetivo para entrenamiento")
-            return None, None, None, None, None
-        
-        # Dividir en entrenamiento y prueba (80/20)
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=None
-        )
-        
-        print(f"✅ División entrenamiento/prueba completada:")
-        print(f"   📊 Entrenamiento: X{X_train.shape}, y{len(y_train)}")
-        print(f"   📊 Prueba: X{X_test.shape}, y{len(y_test)}")
-        
-        return X_train, X_test, y_train, y_test, feature_names
-        
-        # Dividir datos para entrenamiento y test
-        from sklearn.model_selection import train_test_split
-        
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=None
-        )
-        
-        print(f"✅ Split completado:")
-        print(f"   📊 Entrenamiento: {len(X_train)} muestras")
-        print(f"   📊 Test: {len(X_test)} muestras")
-        print(f"   🔧 Features: {X.shape[1]}")
-        
-        # Retornar en el formato esperado por el pipeline
-        return X_train, X_test, y_train, y_test, self.label_encoder
-    
-    def _ensure_31_features(self, X):
-        """Garantiza que X tenga exactamente 31 features, completando las faltantes"""
-        
-        # Lista expandida con las nuevas features valiosas identificadas
+    def _ensure_31_features(self, X: pd.DataFrame) -> pd.DataFrame:
         target_features = [
-            # Features básicas mejoradas
-            'quali_position',            # Reemplaza grid_position (mejor correlación 0.672)
-            'quali_best_time',
-            'race_best_lap_time',
-            'clean_air_pace',
-            'session_air_temp',
-            'session_track_temp',
-            'session_humidity',
-            'session_rainfall',
-            
-            # Features de identidad (IMPORTANTE!)
-            'team_encoded',              # Identidad del equipo (CLAVE para predicción)
-            'driver_encoded',            # Identidad del piloto (CLAVE para predicción)
-            
-            # Features avanzadas originales
-            'quali_gap_to_pole',
-            'fp1_gap_to_fastest',
-            'team_quali_rank',
-            'avg_position_last_3',
-            'points_last_3',
-            'heat_index',
-            'weather_difficulty_index',
-            'team_track_avg_position',
-            'sector_consistency',
-            'fp1_to_quali_improvement',
-            'grid_to_race_change',
-            'overtaking_ability',
-            
-            # Nuevas features de alta prioridad
-            'avg_position',              # Correlación 0.832 - Habilidad histórica piloto
-            'total_laps',                # Correlación 0.329 - Fiabilidad/DNF indicator
-            'avg_tyre_life',             # Correlación 0.190 - Estrategia neumáticos
-            'position_changes',          # Correlación 0.184 - Habilidad adelantamiento
-            
-            # Features de clasificación detallada
-            'fp3_best_time',             # Rendimiento pre-carrera más reciente
-            'q1_time',                   # Tiempo en Q1
-            'q2_time',                   # Tiempo en Q2
-            'q3_time',                   # Tiempo en Q3
-            'grid_position'              # Mantener como backup/comparación
+            'driver_encoded', 'team_encoded', 'driver_skill_factor', 'team_strength_factor',
+            'driver_team_synergy', 'driver_competitiveness', 'team_competitiveness',
+            'session_air_temp', 'session_track_temp', 'session_humidity', 'session_rainfall',
+            'driver_weather_skill', 'driver_rain_advantage', 'fp1_gap_to_fastest', 'points_last_3',
+            'heat_index', 'weather_difficulty_index', 'team_track_avg_position', 'sector_consistency',
+            'overtaking_ability', 'total_laps', 'fp3_best_time', 'expected_grid_position', 'fp3_rank'
         ]
-        
-        print(f"   🔧 Asegurando {len(target_features)} features para compatibilidad con modelos...")
-        
-        # Crear DataFrame con todas las features necesarias preservando datos existentes
         result = pd.DataFrame(index=X.index)
-        
-        for feature in target_features:
-            if feature in X.columns:
-                # PRESERVAR datos existentes - NO sobrescribir
-                result[feature] = X[feature]
-                print(f"     ✅ {feature}: datos reales preservados")
+        for f in target_features:
+            if f in X.columns:
+                result[f] = X[f]
             else:
-                # Solo crear features que realmente faltan
-                if 'position' in feature:
-                    default_value = 10.0  # Posición media
-                elif 'temp' in feature:
-                    default_value = 25.0  # Temperatura media
-                elif 'humidity' in feature:
-                    default_value = 50.0  # Humedad media
-                elif 'rainfall' in feature:
-                    default_value = 0.0   # Sin lluvia
-                elif 'pace' in feature or 'time' in feature:
-                    default_value = 90.0  # Tiempo medio
-                elif 'gap' in feature:
-                    default_value = 1.0   # Gap medio
-                elif 'rank' in feature:
-                    default_value = 10.0  # Ranking medio
-                elif 'points' in feature:
-                    default_value = 5.0   # Puntos medios
-                elif 'index' in feature:
-                    default_value = 1.0   # Índice neutro
-                elif 'consistency' in feature or 'improvement' in feature:
-                    default_value = 0.5   # Valor medio
-                elif 'change' in feature or 'ability' in feature:
-                    default_value = 0.0   # Neutro
-                elif 'laps' in feature:
-                    default_value = 58.0  # Vueltas promedio F1
-                elif 'tyre' in feature or 'life' in feature:
-                    default_value = 25.0  # Vida neumático promedio
+                if any(k in f for k in ['skill', 'competitiveness', 'synergy']):
+                    val = 0.75
+                elif 'strength' in f:
+                    val = 0.5
+                elif 'position' in f:
+                    val = 10.0
+                elif 'temp' in f:
+                    val = 25.0
+                elif 'humidity' in f:
+                    val = 50.0
+                elif 'rainfall' in f:
+                    val = 0.0
+                elif any(k in f for k in ['pace', 'time']):
+                    val = 90.0
+                elif 'gap' in f:
+                    val = 1.0
+                elif 'rank' in f:
+                    val = 10.0
+                elif 'points' in f:
+                    val = 5.0
+                elif 'index' in f or 'consistency' in f or 'improvement' in f:
+                    val = 0.5
+                elif 'change' in f or 'ability' in f:
+                    val = 0.0
+                elif 'laps' in f:
+                    val = 58.0
+                elif 'tyre' in f or 'life' in f:
+                    val = 25.0
                 else:
-                    default_value = 0.0   # Genérico
-                
-                result[feature] = default_value
-                print(f"     🆕 {feature}: creada con valor {default_value}")
-        
-        print(f"   ✅ Features finales: {len(result.columns)} (objetivo: {len(target_features)})")
-        
+                    val = 0.0
+                result[f] = val
+        self._log(f"   ✅ Features finales aseguradas: {len(result.columns)}")
         return result
+
+    def prepare_training_data(self, df: pd.DataFrame):
+        result = self.prepare_enhanced_features(df)
+        if not (isinstance(result, tuple) and len(result) == 4):
+            self._log("❌ Error: formato inesperado de prepare_enhanced_features")
+            return None, None, None, None, None
+        X, y, label_encoder, feature_names = result
+        if X is None or y is None:
+            self._log("❌ Error en preparación de features")
+            return None, None, None, None, None
+        from sklearn.model_selection import train_test_split
+        train_idx, test_idx = train_test_split(range(len(X)), test_size=0.2, random_state=42, shuffle=True)
+        X_train = X.iloc[train_idx].reset_index(drop=True)
+        X_test = X.iloc[test_idx].reset_index(drop=True)
+        y_train = y.iloc[train_idx].reset_index(drop=True)
+        y_test = y.iloc[test_idx].reset_index(drop=True)
+        try:
+            years_series = getattr(self, 'sample_years', None)
+            if years_series is not None:
+                self.train_years = years_series.iloc[train_idx].reset_index(drop=True)
+                self.test_years = years_series.iloc[test_idx].reset_index(drop=True)
+        except Exception:
+            self.train_years = None
+            self.test_years = None
+        self.train_indices = train_idx
+        self.test_indices = test_idx
+        self._log(f"✅ Split: train {X_train.shape}, test {X_test.shape}")
+        return X_train, X_test, y_train, y_test, feature_names

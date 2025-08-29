@@ -24,9 +24,7 @@ def main():
         pipeline.preprocess_data()
         print("Datos descargados y procesados exitosamente.")
     elif action == "2":
-        print("🚀 Entrenando modelos con pipeline mejorado...")
-        print("   📊 Features avanzadas: Habilitadas")
-        print("   🎯 Mejora esperada: ~98% reducción de error")
+        print("🚀 Entrenando modelos...")
         pipeline.run()
     elif action == "3":
         pipeline.predict_next_race_positions()

@@ -6,67 +6,41 @@ class ProgressiveAdapter:
         self.drivers_config = DRIVERS_2025
         
     def calculate_adaptation_penalty(self, driver, current_race_number):
-        """Calcula la penalización de adaptación basada en el número de carrera actual"""
+        """Calcula la penalización progresiva SOLO para cambio de equipo"""
         driver_info = self.drivers_config.get(driver, {})
-        
-        # Si el piloto no tiene cambios, no hay penalización
-        if not (driver_info.get("rookie", False) or driver_info.get("team_change", False)):
+        # Rookies no usan penalización progresiva
+        if not driver_info.get("team_change", False):
             return 0.0
-        
-        # Determinar tipo de cambio
-        if driver_info.get("rookie", False):
-            change_type = "rookie"
-        elif driver_info.get("team_change", False):
-            change_type = "team_change"
-        else:
-            return 0.0
-        
-        # Obtener configuración del tipo de cambio
+        change_type = "team_change"
         change_config = self.adaptation_config["change_types"][change_type]
         base_penalty = change_config["base_penalty"]
         adaptation_races = change_config["adaptation_races"]
-        
-        # Si ya pasaron las carreras de adaptación, no hay penalización
         if current_race_number > adaptation_races:
             return 0.0
-        
-        # Calcular penalización progresiva
         progress_ratio = (current_race_number - 1) / adaptation_races
         remaining_penalty = base_penalty * (1 - progress_ratio)
-        
         return max(0.0, remaining_penalty)
     
     def get_adaptation_status(self, driver, current_race_number):
-        """Obtiene el estado de adaptación de un piloto"""
+        """Estado de adaptación SOLO para cambio de equipo; rookies se tratan aparte"""
         driver_info = self.drivers_config.get(driver, {})
-        
-        if not (driver_info.get("rookie", False) or driver_info.get("team_change", False)):
+        if not driver_info.get("team_change", False):
             return {
                 "status": "fully_adapted",
                 "penalty": 0.0,
-                "description": "Sin cambios - completamente adaptado",
+                "description": "Sin cambio de equipo",
                 "progress": 100
             }
-        
-        # Determinar tipo de cambio
-        if driver_info.get("rookie", False):
-            change_type = "rookie"
-        elif driver_info.get("team_change", False):
-            change_type = "team_change"
-        else:
-            change_type = "unknown"
-        
+        change_type = "team_change"
         change_config = self.adaptation_config["change_types"][change_type]
         adaptation_races = change_config["adaptation_races"]
         penalty = self.calculate_adaptation_penalty(driver, current_race_number)
-        
         if current_race_number > adaptation_races:
             status = "fully_adapted"
             progress = 100
         else:
             status = "adapting"
             progress = min(100, int((current_race_number / adaptation_races) * 100))
-        
         return {
             "status": status,
             "penalty": penalty,
