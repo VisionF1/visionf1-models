@@ -107,16 +107,16 @@ class Pipeline:
     def predict_next_race_positions(self):
         """Predice posiciones para la próxima carrera"""
         print("🎯 Prediciendo posiciones para próxima carrera...")
-        
+
         predictor = SimplePositionPredictor()
         predictions_df = predictor.predict_positions_2025()
         predictor.show_realistic_predictions(predictions_df)
-        
+
         # Guardar predicciones
         output_file = "app/models_cache/realistic_predictions_2025.csv"
         predictions_df.to_csv(output_file, index=False)
         print(f"💾 Predicciones guardadas: {output_file}")
-        
+
         return predictions_df
 
     def _load_cached_data(self):

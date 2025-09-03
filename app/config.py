@@ -127,7 +127,7 @@ DRIVERS_2025 = {
 PENALTIES = {
     "rookie": 2.5,           # Penalización para rookies
     "team_change": 1.5,      # Penalización por cambio de equipo
-    "adaptation_races": 8,   # Carreras para adaptarse completamente
+    "adaptation_races": 10,   # Carreras para adaptarse completamente
     "use_progressive": True  # Usar sistema de adaptación progresiva
 }
 

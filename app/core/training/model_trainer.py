@@ -2,12 +2,19 @@ import pickle
 import os
 import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from scipy.stats import kendalltau, spearmanr
 from sklearn.model_selection import cross_val_score, GridSearchCV, TimeSeriesSplit, KFold
 import numpy as np
 from app.core.predictors.random_forest import RandomForestPredictor
 from app.core.predictors.xgboost_model import XGBoostPredictor
 from app.core.predictors.gradient_boosting import GradientBoostingPredictor
 from app.config import DATA_IMPORTANCE
+from pathlib import Path
+import json
+
+INFERENCE_MANIFEST_PATH = Path("app/models_cache/inference_manifest.json")
+CATEGORICAL_COLS = ["driver", "team", "race_name", "circuit_type"]
+
 
 class ModelTrainer:
     def __init__(self, use_time_series_cv=False):
@@ -32,14 +39,14 @@ class ModelTrainer:
             'XGBoost': {
                 'model_class': XGBoostPredictor,
                 'param_grid': {
-                    'n_estimators': [50, 100],
+                    'n_estimators': [200, 400],
                     'max_depth': [2, 3],
-                    'learning_rate': [0.05, 0.1],
+                    'learning_rate': [0.03, 0.06],
                     'subsample': [0.6, 0.8],
                     'colsample_bytree': [0.6, 0.8],
-                    'reg_alpha': [1.0, 2.0],
-                    'reg_lambda': [1.0, 2.0],
-                    'min_child_weight': [5, 10]
+                    'reg_alpha': [2.0, 4.0],
+                    'reg_lambda': [2.0, 4.0],
+                    'min_child_weight': [10, 20]
                 }
             },
             'GradientBoosting': {
@@ -56,6 +63,60 @@ class ModelTrainer:
                 }
             }
         }
+
+    def _save_inference_manifest(self, feature_names, results, selection_metric="kendall"):
+        """
+        Guarda un manifiesto para inferencia con:
+        - feature_names (orden exacto)
+        - encoders por columna categórica
+        - mejor modelo según métrica de selección
+        """
+        # Seleccionar mejor modelo
+        best = None
+        if selection_metric == "kendall":
+            # Mayor kendall_tau_test, con penalización por overfitting
+            candidates = []
+            for name, m in results.items():
+                if "error" in m: 
+                    continue
+                score = (m.get("kendall_tau_test", -1.0) or -1.0) - 0.05 * max(0.0, m.get("overfitting_score", 1.0) - 1.0)
+                candidates.append((score, name))
+            if candidates:
+                best = sorted(candidates, reverse=True)[0][1]
+        else:
+            # Default: menor cv_mse_mean y sin overfitting alto
+            best = None
+            best_cv = float('inf')
+            for name, m in results.items():
+                if "error" in m: 
+                    continue
+                if m.get("overfitting_score", 2.0) >= 1.3:
+                    continue
+                if m.get("cv_mse_mean", float('inf')) < best_cv:
+                    best = name
+                    best_cv = m["cv_mse_mean"]
+
+        # Armar rutas de encoders por columna
+        encoders = {}
+        for col in CATEGORICAL_COLS:
+            path = Path(f"app/models_cache/{col}_encoder.pkl")
+            if path.exists():
+                encoders[col] = str(path)
+            else:
+                encoders[col] = None
+
+        manifest = {
+            "feature_names": list(feature_names or []),
+            "categorical_cols": CATEGORICAL_COLS,
+            "encoders": encoders,
+            "best_model_name": best,
+        }
+        INFERENCE_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(INFERENCE_MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        print(f"💾 Manifiesto de inferencia guardado: {INFERENCE_MANIFEST_PATH}")
+
+
 
     def train_all_models(self, X_train, X_test, y_train, y_test, label_encoder, feature_names, df_original=None, train_indices=None):
         print("Entrenando modelos con Cross-Validation...")
@@ -92,6 +153,11 @@ class ModelTrainer:
             print("✅ Dataset adecuado: usando regularización estándar")
 
         self._save_metadata(label_encoder, feature_names)
+        # 🔎 Auditoría rápida de features usadas para entrenar (pre-race vs post-race)
+        try:
+            self._audit_features(feature_names, target_name=getattr(y_train, 'name', None))
+        except Exception as _e:
+            print(f"⚠️  Auditoría de features falló: {_e}")
         cv_splitter = self._get_cv_splitter(X_train)
 
         for name, model_config in self.models.items():
@@ -149,9 +215,15 @@ class ModelTrainer:
             param_grid = self.models[model_name]['param_grid']
             
             if 'max_depth' in param_grid:
-                param_grid['max_depth'] = [2, 3]  # Limitar profundidad
+                param_grid['max_depth'] = [2]  # Limitar más la profundidad
             if 'n_estimators' in param_grid:
-                param_grid['n_estimators'] = [20, 30, 50]  # Menos estimadores
+                param_grid['n_estimators'] = [30, 50]  # Menos estimadores
+            if 'min_samples_split' in param_grid:
+                param_grid['min_samples_split'] = [25, 35]
+            if 'min_samples_leaf' in param_grid:
+                param_grid['min_samples_leaf'] = [12, 18]
+            if model_name == 'GradientBoosting' and 'learning_rate' in param_grid:
+                param_grid['learning_rate'] = [0.03, 0.05]
 
     def _get_cv_splitter(self, X_train):
         n_samples = len(X_train)
@@ -179,9 +251,9 @@ class ModelTrainer:
             if len(X_train) > 20:
                 # CONFIGURACIÓN ESPECIAL PARA XGBOOST SIN EARLY STOPPING (API NUEVA)
                 if name == 'XGBoost':
-                    # Para XGBoost, usar GridSearchCV estándar sin early stopping
-                    print(f"🔍 Optimización estándar para {name} (sin early stopping)...")
-                    
+                    # Para XGBoost, usar GridSearchCV estándar sin early stopping (evitar errores de API)
+                    print(f"🔍 Optimización estándar para {name} (GridSearchCV sin early stopping)...")
+
                     grid_search = GridSearchCV(
                         base_model.model,
                         model_config['param_grid'],
@@ -192,15 +264,15 @@ class ModelTrainer:
                     )
                     combinations = self._get_param_combinations(model_config['param_grid'])
                     print(f"🔍 Calculando {combinations} combinaciones de hiperparámetros...")
-                    
+
                     # Aplicar sample_weights si están disponibles
                     if sample_weights is not None:
                         grid_search.fit(X_train, y_train, sample_weight=sample_weights)
                     else:
                         grid_search.fit(X_train, y_train)
-                    
+
                     self._show_hyperparameter_search_details(grid_search, name)
-                    
+
                     best_model = grid_search.best_estimator_
                     best_params = grid_search.best_params_
                     print(f"✅ Mejor CV score: {-grid_search.best_score_:.4f}")
@@ -255,6 +327,13 @@ class ModelTrainer:
             y_pred_train = best_model.predict(X_train)
             y_pred_test = best_model.predict(X_test)
 
+
+            tau_train, _ = kendalltau(y_train, y_pred_train)
+            tau_test, _ = kendalltau(y_test, y_pred_test)
+
+            rho_train, _ = spearmanr(y_train, y_pred_train)
+            rho_test, _ = spearmanr(y_test, y_pred_test)
+
             metrics = {
                 'cv_mse_mean': cv_mean,
                 'cv_mse_std': cv_std,
@@ -265,6 +344,10 @@ class ModelTrainer:
                 'test_mse': mean_squared_error(y_test, y_pred_test),
                 'test_mae': mean_absolute_error(y_test, y_pred_test),
                 'test_r2': r2_score(y_test, y_pred_test),
+                'kendall_tau_train': tau_train,
+                'kendall_tau_test': tau_test,
+                'spearman_rho_train': rho_train,
+                'spearman_rho_test': rho_test,
                 'best_params': best_params,
                 'overfitting_score': self._calculate_overfitting_score(
                     mean_squared_error(y_train, y_pred_train),
@@ -469,6 +552,9 @@ class ModelTrainer:
         print(f"🏋️  Train MSE: {metrics['train_mse']:.4f}")
         print(f"🎯 Test MSE:  {metrics['test_mse']:.4f}")
         print(f"📈 Test R²:   {metrics['test_r2']:.4f}")
+        print(f"🔗 Kendall’s tau (train): {metrics['kendall_tau_train']:.3f}")
+        print(f"🔗 Kendall’s tau (test):  {metrics['kendall_tau_test']:.3f}")
+        print(f"🔗 Spearman rho (test):   {metrics['spearman_rho_test']:.3f}")
 
         overfitting = metrics['overfitting_score']
         if overfitting < 1.1:
@@ -486,7 +572,7 @@ class ModelTrainer:
         print("🏆 COMPARACIÓN DETALLADA DE MODELOS CON CROSS-VALIDATION")
         print(f"{'='*80}")
 
-        print(f"{'Modelo':<15} {'CV MSE':<12} {'Test MSE':<10} {'Test R²':<8} {'Overfitting':<12} {'Estado'}")
+        print(f"{'Modelo':<15} {'CV MSE':<12} {'Test MSE':<10} {'Test R²':<8} {'Kendalls Tau':<12} {'Overfitting':<12} {'Estado'}")
         print("-" * 80)
 
         best_cv_score = float('inf')
@@ -501,6 +587,7 @@ class ModelTrainer:
             test_mse = metrics['test_mse']
             test_r2 = metrics['test_r2']
             overfitting = metrics['overfitting_score']
+            kendall_tau = metrics['kendall_tau_test']
 
             if overfitting < 1.1:
                 status = "✅ Bueno"
@@ -510,7 +597,7 @@ class ModelTrainer:
                 status = "🚨 Overfitting"
 
             print(f"{name:<15} {cv_score:<12.4f} {test_mse:<10.4f} "
-                  f"{test_r2:<8.4f} {overfitting:<12.2f} {status}")
+                  f"{test_r2:<8.4f} {kendall_tau:<12.2f} {overfitting:<12.2f} {status}")
 
             if cv_score < best_cv_score and overfitting < 1.3:
                 best_cv_score = cv_score
@@ -542,6 +629,11 @@ class ModelTrainer:
             print("✅ Metadata guardada")
         except Exception as e:
             print(f"❌ Error guardando metadata: {e}")
+        try:
+            if self.results:
+                self._save_inference_manifest(feature_names, self.results, selection_metric="kendall")
+        except Exception as e:
+            print(f"⚠️ No se pudo guardar manifiesto de inferencia: {e}")
 
     def _save_training_results(self, results):
         """Guarda métricas de entrenamiento para selección posterior"""
@@ -615,3 +707,66 @@ class ModelTrainer:
             print(f"   {year}: {weight:.1%} peso × {count} muestras")
         
         return weights.values
+
+    # =======================
+    # Feature audit utilities
+    # =======================
+    def _audit_features(self, feature_names, target_name=None, prefix="Entrenamiento"):
+        if not feature_names:
+            print("⚠️  Sin feature_names para auditar")
+            return
+        print(f"\n🧾 {prefix}: FEATURES USADAS ({len(feature_names)})")
+        if target_name:
+            print(f"   🎯 Target: {target_name}")
+        safe, unsafe = [], []
+        for f in feature_names:
+            is_safe, reason = self._is_pre_race_safe(f)
+            (safe if is_safe else unsafe).append((f, reason))
+        if unsafe:
+            print("   🚫 Sospecha post-race (revisar):")
+            for name, reason in unsafe:
+                print(f"      - {name}  [{reason}]")
+        print("   ✅ Pre-race (ok):")
+        for name, _ in safe:
+            print(f"      - {name}")
+        # Guardar auditoría legible
+        try:
+            out_path = "app/models_cache/feature_audit.txt"
+            rows = [f"Target: {target_name}\n\n", "UNSAFE (post-race sospechoso):\n"]
+            rows += [f"- {n} [{r}]\n" for n, r in unsafe]
+            rows += ["\nSAFE (pre-race):\n"]
+            rows += [f"- {n}\n" for n, _ in safe]
+            with open(out_path, 'w') as f:
+                f.writelines(rows)
+            print(f"📄 Auditoría de features guardada: {out_path}")
+        except Exception:
+            pass
+
+    def _is_pre_race_safe(self, name: str):
+        n = (name or '').lower()
+        # Señales seguramente post-race o que dependen del resultado del GP
+        unsafe_tokens = [
+            'race_position', 'final_position', 'grid_position', 'grid_to_race_change',
+            'quali_vs_race_delta', 'points_efficiency', 'fastest_lap', 'status',
+            'race_best_lap', 'lap_time_std', 'lap_time_consistency'
+        ]
+        # Evitar falso positivo: permitir fp3_best_time (sesión previa)
+        if n == 'fp3_best_time':
+            return True, 'fp3 (pre-quali)'
+        if any(tok in n for tok in unsafe_tokens):
+            return False, 'contiene métrica de carrera/resultado'
+        # Candidatas pre-race (prácticas, clima, histórico, codificación)
+        safe_prefixes = [
+            'fp1_', 'fp2_', 'fp3_', 'session_', 'weather_', 'team_avg_position_',
+            'driver_', 'team_', 'expected_grid_position', 'points_last_3',
+            'avg_position_last_3', 'avg_quali_last_3', 'overtaking_ability',
+            'team_track_avg_position', 'driver_track_avg_position', 'sector_',
+            'heat_index', 'temp_deviation_from_ideal', 'weather_difficulty_index',
+            'total_laps'
+        ]
+        if any(n.startswith(p) for p in safe_prefixes):
+            return True, 'histórico/prácticas/clima'
+        # Default: considerarla pre-race pero marcar como "revisar" si suena a quali directa
+        if 'quali_position' in n:
+            return False, 'quali directa (del evento)'
+        return True, 'genérica'

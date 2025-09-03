@@ -8,11 +8,11 @@ def main():
         print("  1) Descargar datos")
         print("  2) Entrenar modelos (con feature engineering avanzado)")
         print("  3) Predicciones de posiciones para próxima carrera")
-        print("")
-        print(f"📅 Próxima carrera configurada: {PREDICTION_CONFIG['next_race']['race_name']}")
-        print(f"🏁 Carrera #{PREDICTION_CONFIG['next_race'].get('race_number', 1)} de la temporada 2025")
-        print("🚀 Pipeline mejorado con 12 features avanzadas activado")
         sys.exit(1)
+    print("")
+    print(f"📅 Próxima carrera configurada: {PREDICTION_CONFIG['next_race']['race_name']}")
+    print(f"🏁 Carrera #{PREDICTION_CONFIG['next_race'].get('race_number', 1)} de la temporada 2025")
+
 
     action = sys.argv[1]
     # Pipeline básico
