@@ -109,10 +109,17 @@ PREDICTION_CONFIG = {
     
     # 🎯 CONFIGURACIÓN DE PREDICCIÓN ACTIVA
     "active_scenario": "dry",  # Cambiar por: "dry", "hot", "wet", "storm", "cold"
+    "active_scenario_emoji": "☀️"
+    # "dry": "☀️",
+    # "hot": "🔥",
+    # "wet": "🌧️",
+    # "storm": "⛈️",
+    # "cold": "❄️"
+
 
 }
 
-# � PESOS POR AÑOS - Importancia temporal de los datos
+# PESOS POR AÑOS - Importancia temporal de los datos
 DATA_IMPORTANCE = {
     "2025_weight": 0.50,  # 50% - Datos más recientes (máxima importancia)
     "2024_weight": 0.30,  # 30% - Año anterior (alta importancia)

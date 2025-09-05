@@ -623,3 +623,78 @@ class SimplePositionPredictor:
                 f"P{int(row['final_position']):<3} {row['driver']:<6} {str(row['team'])[:16]:<16} {row['driver_type']:<20} "
                 f"{float(row['predicted_position']):<8.3f} {float(row['confidence']):<6.1f}"
             )
+
+
+
+    def _compute_permutation_importance_on_preds(self, X: pd.DataFrame, n_repeats: int = 10, random_state: int = 42) -> pd.Series:
+        """
+        Importancia por permutación SIN y_true:
+        mide el cambio medio absoluto en la predicción al permutar cada feature.
+        Compatible con cualquier modelo ya entrenado.
+        """
+        rng = np.random.RandomState(random_state)
+        X_aligned = self._align_columns(X)
+        cols = list(X_aligned.columns)
+        baseline = self.model.predict(X_aligned.values).astype(float)
+
+        changes = np.zeros(len(cols), dtype=float)
+        for rep in range(n_repeats):
+            for j, col in enumerate(cols):
+                Xp = X_aligned.copy()
+                Xp[col] = rng.permutation(Xp[col].values)
+                preds = self.model.predict(Xp.values).astype(float)
+                changes[j] += np.mean(np.abs(preds - baseline))
+        changes /= float(n_repeats)
+        return pd.Series(changes, index=cols)
+
+    def explain_feature_importance(self, top_k: int = 25,
+                                csv_path: str = "app/models_cache/feature_importances.csv",
+                                png_path: str = "app/models_cache/feature_importances.png",
+                                n_repeats: int = 10) -> pd.DataFrame:
+        """
+        1) Reconstruye X (history-augmented) para la próxima carrera.
+        2) Calcula importancias:
+        - Si el modelo tiene .feature_importances_ -> nativo.
+        - Si no, usa permutación sobre predicciones (no necesita y_true).
+        3) Guarda CSV + un gráfico PNG y devuelve el DataFrame ordenado.
+        """
+        # 1) armar X de la próxima carrera
+        base_df = self._build_base_df()
+        X = self._load_inference_features(base_df)
+        X = self._align_columns(X)
+
+        # 2) importancias
+        if hasattr(self.model, "feature_importances_") and self.model.feature_importances_ is not None:
+            importances = pd.Series(self.model.feature_importances_, index=X.columns, dtype=float)
+            method = "native"
+        else:
+            importances = self._compute_permutation_importance_on_preds(X, n_repeats=n_repeats)
+            method = f"permutation_preds_{n_repeats}"
+
+        # 3) ordenar y normalizar a %
+        fi = (importances
+            .sort_values(ascending=False)
+            .to_frame(name="importance"))
+        fi["importance_pct"] = (fi["importance"] / fi["importance"].sum() * 100.0).round(2)
+
+        # 4) guardar CSV
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        fi.reset_index(names="feature").to_csv(csv_path, index=False)
+
+        # 5) gráfico simple (top_k)
+        try:
+            import matplotlib.pyplot as plt
+            top = fi.head(top_k)
+            plt.figure()
+            plt.barh(top.index[::-1], top["importance"].iloc[:top_k][::-1])
+            plt.title(f"Feature Importance ({method}) — top {top_k}")
+            plt.xlabel("importance")
+            plt.ylabel("feature")
+            plt.tight_layout()
+            plt.savefig(png_path, dpi=140)
+        except Exception as e:
+            self._log(f"⚠️ No pude generar gráfico de importancias: {e}")
+
+        self._log(f"💾 Feature importances guardadas: {csv_path}")
+        self._log(f"🖼️ Gráfico guardado: {png_path}")
+        return fi
