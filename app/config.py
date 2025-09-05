@@ -7,11 +7,52 @@ RACE_RANGE = {
     "stop_on_future_races": True   # Parar cuando encuentre carreras futuras
 }
 
+
+
+
+
+
+
+
+"""
+=== Nombres de carreras detectados ===
+- Abu Dhabi Grand Prix
+- Australian Grand Prix
+- Austrian Grand Prix
+- Azerbaijan Grand Prix
+- Bahrain Grand Prix
+- Belgian Grand Prix
+- British Grand Prix
+- Canadian Grand Prix
+- Chinese Grand Prix
+- Dutch Grand Prix
+- Emilia Romagna Grand Prix
+- French Grand Prix
+- Hungarian Grand Prix
+- Italian Grand Prix
+- Japanese Grand Prix
+- Las Vegas Grand Prix
+- Mexico City Grand Prix
+- Miami Grand Prix
+- Monaco Grand Prix
+- Qatar Grand Prix
+- Saudi Arabian Grand Prix
+- Singapore Grand Prix
+- Spanish Grand Prix
+- São Paulo Grand Prix
+- United States Grand Prix
+
+
+"""
+
+
+
+
 # Configuración para predicción de próxima carrera
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "United States GP", 
+        "race_name": "United States Grand Prix", 
         "circuit_name": "Circuit of the Americas",
         "race_number": 19  # Número de carrera en la temporada 2025
     },

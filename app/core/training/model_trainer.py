@@ -170,7 +170,7 @@ class ModelTrainer:
             )
 
         self._show_detailed_comparison()
-        self._save_training_results(self.results)
+        self._save_training_results(self.results, label_encoder, feature_names)
         
         return self.results
 
@@ -621,6 +621,10 @@ class ModelTrainer:
             print(f"❌ Error guardando modelo: {e}")
 
     def _save_metadata(self, label_encoder, feature_names):
+        print("💾 Guardando metadata del modelo!!!!!!!!!!!!!...")
+        print(f"   - Features: {len(feature_names) if feature_names else 0}")
+        print(f"   - Label Encoder: {type(label_encoder).__name__ if label_encoder else 'None'}")
+        print(f"RESULTADOS: {self.results}")
         try:
             with open("app/models_cache/label_encoder.pkl", 'wb') as f:
                 pickle.dump(label_encoder, f)
@@ -629,13 +633,9 @@ class ModelTrainer:
             print("✅ Metadata guardada")
         except Exception as e:
             print(f"❌ Error guardando metadata: {e}")
-        try:
-            if self.results:
-                self._save_inference_manifest(feature_names, self.results, selection_metric="kendall")
-        except Exception as e:
-            print(f"⚠️ No se pudo guardar manifiesto de inferencia: {e}")
+        
 
-    def _save_training_results(self, results):
+    def _save_training_results(self, results,label_encoder, feature_names):
         """Guarda métricas de entrenamiento para selección posterior"""
         try:
             results_file = "app/models_cache/training_results.pkl"
@@ -643,6 +643,13 @@ class ModelTrainer:
                 pickle.dump(results, f)
             
             print(f"💾 Métricas de entrenamiento guardadas: {results_file}")
+
+
+            try:
+                if self.results:
+                    self._save_inference_manifest(feature_names, self.results, selection_metric="kendall")
+            except Exception as e:
+                print(f"⚠️ No se pudo guardar manifiesto de inferencia: {e}")
             
             # También guardar un resumen legible
             self._save_readable_summary(results)
