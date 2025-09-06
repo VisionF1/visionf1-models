@@ -51,11 +51,13 @@ class SimplePositionPredictor:
         # orden de features: manifiesto > pkl legacy
         self.feature_order = self._feature_names_from_manifest() or self._load_trained_feature_names()
 
+        # stats climáticas de la última inferencia (para ajuste post-modelo)
+        self._last_weather_stats = None
+
     # -------------------- utils --------------------
     def _log(self, msg: str):
         if not self.quiet:
             print(msg)
-
 
     def _feature_names_from_manifest(self) -> list[str]:
         if not self.manifest:
@@ -331,8 +333,84 @@ class SimplePositionPredictor:
         h = hashlib.sha1(driver_code.encode("utf-8")).hexdigest()
         return (int(h[:6], 16) % 1000) * 1e-6
 
+    # -------------------- features climáticas (SIN shift) --------------------
+
+    def _add_weather_perf_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calcula por piloto, de forma acumulativa y SIN shift:
+          - driver_avg_points_in_rain
+          - driver_avg_points_in_dry
+          - driver_rain_dry_delta
+
+        Implementación robusta con cumsum/cumcount (evita NaN de expanding sobre series enmascaradas).
+        """
+        import numpy as np
+        import pandas as pd
+
+        if df is None or df.empty:
+            return df
+
+        g = df.copy()
+
+        # columnas mínimas
+        for c in ["driver", "year", "points", "session_rainfall"]:
+            if c not in g.columns:
+                g[c] = np.nan
+
+        # Normalizaciones
+        g["points"] = pd.to_numeric(g["points"], errors="coerce").fillna(0.0)
+
+        # lluvia 0/1 robusto
+        if g["session_rainfall"].dtype == bool:
+            g["session_rainfall"] = g["session_rainfall"].astype(int)
+        else:
+            m = {"true":1, "1":1, "yes":1, "false":0, "0":0, "no":0}
+            g["session_rainfall"] = (
+                g["session_rainfall"].apply(lambda x: m.get(str(x).strip().lower(), x))
+            )
+            g["session_rainfall"] = pd.to_numeric(g["session_rainfall"], errors="coerce").fillna(0).astype(int)
+
+        # Orden temporal por year + round (o índice auxiliar si no hay round)
+        order_cols = ["year"]
+        if "round" in g.columns and g["round"].notna().any():
+            g["round"] = pd.to_numeric(g["round"], errors="coerce")
+            order_cols.append("round")
+        else:
+            g["_row_ix_wthr"] = np.arange(len(g))
+            order_cols.append("_row_ix_wthr")
+
+        g = g.sort_values(order_cols).reset_index(drop=True)
+
+        def _by_driver(h: pd.DataFrame) -> pd.DataFrame:
+            h = h.copy()
+            pts  = h["points"].astype(float)
+            rain = h["session_rainfall"].astype(int)
+            dry  = 1 - rain
+
+            # Acumulados por condición
+            rain_pts_cumsum   = (pts * rain).cumsum()
+            rain_cnt_cumsum   = rain.cumsum()
+            dry_pts_cumsum    = (pts * dry).cumsum()
+            dry_cnt_cumsum    = dry.cumsum()
+
+            # Medias acumuladas seguras (0 si aún no hay casos)
+            h["driver_avg_points_in_rain"] = np.where(
+                rain_cnt_cumsum > 0, rain_pts_cumsum / rain_cnt_cumsum, 0.0
+            )
+            h["driver_avg_points_in_dry"] = np.where(
+                dry_cnt_cumsum > 0, dry_pts_cumsum / dry_cnt_cumsum, 0.0
+            )
+            h["driver_rain_dry_delta"] = h["driver_avg_points_in_rain"] - h["driver_avg_points_in_dry"]
+            return h
+
+        g = g.groupby("driver", group_keys=False).apply(_by_driver)
+
+        if "_row_ix_wthr" in g.columns:
+            g.drop(columns=["_row_ix_wthr"], inplace=True, errors="ignore")
+
+        return g
+
     # -------------------- carga de dataset para inferencia --------------------
-    # --- núcleo: history-augmented + híbrido + dedupe seguro ---
 
     def _load_inference_features(self, base_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -377,17 +455,89 @@ class SimplePositionPredictor:
             if c not in hist_df.columns:
                 hist_df[c] = np.nan
 
-        # 3) combo histórico + actuales
-        base_marked = base_df[["driver", "team", "year", "race_name"]].copy()
+        # asegurar columnas climáticas en histórico
+        for c, val in [("session_air_temp", 25.0),
+                       ("session_track_temp", 35.0),
+                       ("session_humidity", 60.0),
+                       ("session_rainfall", 0)]:
+            if c not in hist_df.columns:
+                hist_df[c] = val
+
+        # 3) combo histórico + actuales (con clima)
+        base_marked = base_df[["driver","team","year","race_name",
+                               "session_air_temp","session_track_temp","session_humidity","session_rainfall"]].copy()
         base_marked["points"] = np.nan
         base_marked["is_current"] = 1
-        hist_marked = hist_df[["driver", "team", "year", "race_name", "points"]].copy()
+
+        hist_marked = hist_df[["driver","team","year","race_name","points",
+                               "session_air_temp","session_track_temp","session_humidity","session_rainfall"]].copy()
         hist_marked["is_current"] = 0
+
         combo_df = pd.concat([hist_marked, base_marked], ignore_index=True)
+
+        # 3a) añadir features climáticas por piloto en el combo
+        combo_df = self._add_weather_perf_features(combo_df)
+
+        # 3b) guardar stats climáticas acumuladas hasta la ÚLTIMA carrera histórica (incluye 2025 corrido, excluye la actual)
+        try:
+            hist_only = combo_df[combo_df["is_current"] == 0].copy()
+
+            order_cols = ["year"]
+            if "round" in hist_only.columns and hist_only["round"].notna().any():
+                hist_only["round"] = pd.to_numeric(hist_only["round"], errors="coerce")
+                order_cols.append("round")
+            else:
+                hist_only["_row_ix"] = np.arange(len(hist_only))
+                order_cols.append("_row_ix")
+
+            hist_only = hist_only.sort_values(order_cols)
+
+            stats = (hist_only
+                     .groupby("driver", as_index=False)
+                     .last()[[
+                         "driver",
+                         "driver_avg_points_in_rain",
+                         "driver_avg_points_in_dry",
+                         "driver_rain_dry_delta"
+                     ]])
+
+            self._last_weather_stats = stats.reset_index(drop=True)
+        except Exception:
+            self._last_weather_stats = None
+
+        # Debug opcional
+        try:
+            subset = self._last_weather_stats[self._last_weather_stats["driver"].isin(["VER","HAM","NOR"])]
+            print("Ejemplo VER / HAM / NOR:")
+            print(subset)
+        except Exception:
+            pass
 
         # 4) FE sobre combo
         X_all, _, _, _ = self.dp.prepare_enhanced_features(combo_df.copy(), inference=True)
         X_all = pd.DataFrame(X_all) if not isinstance(X_all, pd.DataFrame) else X_all
+
+        # 4a) asegurar columna 'driver' en X_all para poder mergear por driver
+        if "driver" not in X_all.columns:
+            if "driver_encoded" in X_all.columns:
+                try:
+                    dec = self._decode_series("driver", X_all["driver_encoded"])
+                    X_all = X_all.copy()
+                    X_all.insert(0, "driver", dec)
+                except Exception:
+                    # peor caso: usar base_df
+                    X_all.insert(0, "driver", base_df.index.tolist())
+            else:
+                X_all.insert(0, "driver", base_df.index.tolist())
+
+        # 4b) reinyectar las 3 columnas con el ÚLTIMO acumulado histórico (merge SOLO por driver)
+        if self._last_weather_stats is not None and not self._last_weather_stats.empty:
+            stats = self._last_weather_stats.copy()
+            X_all = X_all.merge(stats, on="driver", how="left")
+        else:
+            for c in ["driver_avg_points_in_rain", "driver_avg_points_in_dry", "driver_rain_dry_delta"]:
+                if c not in X_all.columns:
+                    X_all[c] = 0.0
 
         # ===== extracción de 20 filas =====
         cur = pd.DataFrame()
@@ -429,7 +579,7 @@ class SimplePositionPredictor:
             if len(cur_try) == len(base_df):
                 cur = cur_try.copy()
 
-        # Intento 2: última por driver_encoded (y filtrar a base_set).
+        # Intento 2: última por driver_encoded
         if cur.empty and has_dre:
             base_codes = _base_driver_codes()
             self._log(f"🧭 base_driver_codes detectados: {len(base_codes)}")
@@ -442,13 +592,12 @@ class SimplePositionPredictor:
                 cur_try = cur_try[cur_try["driver_encoded"].isin(base_codes)].copy()
                 self._log(f"🔎 + filtro base_set -> filas={len(cur_try)}")
 
-            # Fallback si base_codes está vacío: usar decode y filtrar por abreviaturas de base_df
+            # Fallback: decodificar y filtrar por abreviaturas actuales
             if (len(cur_try) == 0) and ("driver_encoded" in last_per_driver.columns):
                 try:
                     dec = self._decode_series("driver", last_per_driver["driver_encoded"])
                     last_per_driver = last_per_driver.copy()
                     last_per_driver["driver"] = dec
-                    # quedarnos con los 20 de base_df por abreviatura directa
                     cur_try = last_per_driver[last_per_driver["driver"].isin(base_df.index)].copy()
                     self._log(f"🔎 fallback decode driver → filtro por base_df -> filas={len(cur_try)}")
                 except Exception as e:
@@ -460,7 +609,6 @@ class SimplePositionPredictor:
             if "driver" in cur_try.columns:
                 have_set = set(cur_try["driver"].dropna().tolist())
             elif "driver_encoded" in cur_try.columns:
-                # mapear a abreviatura para saber si está
                 try:
                     dec2 = self._decode_series("driver", cur_try["driver_encoded"])
                     have_set = set(dec2.dropna().tolist())
@@ -507,29 +655,21 @@ class SimplePositionPredictor:
             except Exception:
                 cur.insert(0, "driver", [None]*len(cur))
 
-        # Si existen duplicados de driver, quedarnos con la última
         if "driver" in cur.columns:
-            # dedupe por driver ANTES de set_index
             cur = cur.copy()
             cur = cur.dropna(subset=["driver"])
             cur = cur[~cur["driver"].duplicated(keep="last")]
-
             cur = cur.set_index("driver", drop=True)
-
-            # por las dudas, si aún quedaron duplicados en el índice
             if cur.index.has_duplicates:
                 cur = cur[~cur.index.duplicated(keep="last")]
-
         else:
-            # como último recurso, forzar índice con base_df
             if cur.shape[0] != base_df.shape[0]:
                 cur = cur.iloc[: base_df.shape[0]].copy()
             cur.index = base_df.index
 
-        # normalizar cardinalidad y orden según base_df (ahora sí sin duplicados)
+        # normalizar cardinalidad/orden según base_df
         if cur.shape[0] != base_df.shape[0] or not cur.index.equals(base_df.index):
             self._log(f"🔧 Normalizo cardinalidad/orden (cur={cur.shape[0]} vs base={base_df.shape[0]})")
-            # reindex seguro: como ya deduplicamos, no explota
             cur = cur.reindex(base_df.index)
 
         # alinear columnas al orden del modelo
@@ -537,7 +677,28 @@ class SimplePositionPredictor:
         self._log(f"📦 FE history-augmented{' (híbrido)' if used_hybrid else ''} → filas={len(cur)}, cols={cur.shape[1]}")
         return cur
 
+    # -------------------- ajuste post-modelo por clima --------------------
 
+    def _apply_weather_adjustment(self, preds_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ajuste post-modelo usando deltas climáticos.
+        - Si el escenario activo es 'wet': movemos la predicción por -alpha * delta (mejoran los 'rain specialists').
+        - Si es 'dry': movemos por +alpha * delta (castiga levemente a los que rinden solo en lluvia).
+        """
+        scen = PREDICTION_CONFIG.get("active_scenario", "dry")
+        stats = getattr(self, "_last_weather_stats", None)
+        if stats is None or scen not in ("wet", "dry"):
+            return preds_df
+
+        alpha = 0  # sensibilidad: posiciones por punto de delta (ajustable)
+        sign  = -1.0 if scen == "wet" else +1.0
+
+        m = stats.set_index("driver")["driver_rain_dry_delta"]
+        out = preds_df.copy()
+        out["driver_rain_dry_delta"] = out["driver"].map(m).fillna(0.0)
+        # Queremos que delta positivo (mejor en lluvia) reduzca la posición en wet (mejora)
+        out["predicted_position"] = (out["predicted_position"] + sign * alpha * (-out["driver_rain_dry_delta"])).astype(float)
+        return out
 
     # -------------------- API principal --------------------
     def predict_positions_2025(self) -> pd.DataFrame:
@@ -546,17 +707,43 @@ class SimplePositionPredictor:
         base_df = self._build_base_df()
         X = self._load_inference_features(base_df)
 
-        # Guardar dataset de inferencia con metadatos
         try:
+            # Partimos del X que va al modelo
             X_with_meta = X.copy()
-            if "team" not in X_with_meta.columns:
-                X_with_meta.insert(0, "team", base_df.loc[X.index, "team"].values)
+
+            # Aseguramos driver/team para merge y para lectura humana
             if "driver" not in X_with_meta.columns:
                 X_with_meta.insert(0, "driver", X.index)
+            if "team" not in X_with_meta.columns:
+                X_with_meta.insert(1, "team", base_df.loc[X.index, "team"].values)
+
+            # Reinyectamos las estadísticas climáticas ACUMULADAS por piloto
+            stats = getattr(self, "_last_weather_stats", None)
+            if stats is not None and not stats.empty:
+                X_with_meta = X_with_meta.merge(stats, on="driver", how="left")
+            else:
+                # si no hay stats, al menos crea las columnas
+                for c in ["driver_avg_points_in_rain", "driver_avg_points_in_dry", "driver_rain_dry_delta"]:
+                    if c not in X_with_meta.columns:
+                        X_with_meta[c] = 0.0
+
+            # Guardar CSV para inspección
             X_with_meta.to_csv(INFERENCE_OUT, index=False)
             print(f"💾 Dataset de inferencia guardado: {INFERENCE_OUT} (shape={X_with_meta.shape})")
+
+            # Debug rápido para verificar que NO sean todos ceros
+            try:
+                sample = X_with_meta[X_with_meta["driver"].isin(["VER","HAM","NOR"])][
+                    ["driver","driver_avg_points_in_rain","driver_avg_points_in_dry","driver_rain_dry_delta"]
+                ]
+                print("🔎 Stats en CSV (VER/HAM/NOR):")
+                print(sample)
+            except Exception:
+                pass
+
         except Exception as e:
             print(f"⚠️ No se pudo guardar dataset de inferencia: {e}")
+
 
         # Predicción
         if X is None or X.shape[0] == 0:
@@ -582,6 +769,12 @@ class SimplePositionPredictor:
         out["predicted_position"] = out.apply(
             lambda r: float(r["predicted_position"]) + self._deterministic_eps(r["driver"]), axis=1
         )
+
+        # Ajuste post-modelo por clima (usa self._last_weather_stats y escenario activo)
+        try:
+            out = self._apply_weather_adjustment(out)
+        except Exception as e:
+            self._log(f"ℹ️ Ajuste climático omitido: {e}")
 
         # Adaptaciones progresivas (si están activadas)
         if PENALTIES.get("use_progressive", False):
@@ -624,7 +817,7 @@ class SimplePositionPredictor:
                 f"{float(row['predicted_position']):<8.3f} {float(row['confidence']):<6.1f}"
             )
 
-
+    # -------------------- explicabilidad --------------------
 
     def _compute_permutation_importance_on_preds(self, X: pd.DataFrame, n_repeats: int = 10, random_state: int = 42) -> pd.Series:
         """

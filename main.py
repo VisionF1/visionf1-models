@@ -12,6 +12,8 @@ def main():
     print("")
     print(f"📅 Próxima carrera configurada: {PREDICTION_CONFIG['next_race']['race_name']}")
     print(f"🏁 Carrera #{PREDICTION_CONFIG['next_race'].get('race_number', 1)} de la temporada 2025")
+    weather_emoji = PREDICTION_CONFIG.get("active_scenario_emoji", "")
+    print(f"Condiciones meteorológicas para predicción: {PREDICTION_CONFIG['active_scenario']} {weather_emoji}")
 
 
     action = sys.argv[1]

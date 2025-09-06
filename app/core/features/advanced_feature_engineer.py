@@ -7,7 +7,7 @@ No usa libres, quali ni información post-carrera.
 Incluye:
 - Normalización de nombres de GP y cálculo de 'round' por año usando fastf1.
 - Compatibilidad de circuito (street/power/hybrid).
-- Momentum de piloto y equipo basado en histórico previo (shift(1)).
+- Momentum de piloto y equipo basado en histórico previo
 
 Requisitos mínimos de entrada:
 - 'year', 'race_name', 'driver', 'team' (recomendado), 'points' (para momentum).
@@ -265,7 +265,7 @@ class AdvancedFeatureEngineer:
         # ---- Momentum por piloto ----
         def _driver_rolling(g: pd.DataFrame) -> pd.DataFrame:
             g = g.copy()
-            prior_points = g["points"].shift(1)  # excluye carrera actual
+            prior_points = g["points"]
             g["driver_points_last_3"] = prior_points.rolling(3, min_periods=1).mean()
             g["driver_points_last_5"] = prior_points.rolling(5, min_periods=1).mean()
             g["driver_points_cumavg"] = prior_points.expanding(min_periods=1).mean()
@@ -296,7 +296,7 @@ class AdvancedFeatureEngineer:
                 .sort_values(race_key)
                 .reset_index(drop=True)
             )
-            tmp["team_points_prior"] = tmp["points"].shift(1)
+            tmp["team_points_prior"] = tmp["points"]
             tmp["team_competitiveness_teamlvl"] = (
                 tmp["team_points_prior"].ewm(alpha=0.4, adjust=False, min_periods=1).mean()
             )
@@ -341,33 +341,127 @@ class AdvancedFeatureEngineer:
         ]
         self._log("✅ Features de momentum creadas (pre-race, excluye carrera actual).")
         return df
+    
+
+    def create_weather_performance_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Rendimiento histórico condicionado por clima (lluvia vs seco), 100% pre-race safe.
+        Crea:
+        - driver_avg_points_in_rain
+        - driver_avg_points_in_dry
+        - driver_rain_dry_delta
+        """
+        df = df.copy()
+        df = self._ensure_columns(
+            df, ["driver", "year", "race_name", "points", "session_rainfall"]
+        )
+
+        # Round + orden temporal
+        df = add_round_column(df)
+        order_cols = ["year"]
+        if "round" in df.columns and df["round"].notna().any():
+            df["round"] = pd.to_numeric(df["round"], errors="coerce")
+            order_cols.append("round")
+        else:
+            df["_row_ix_wthr"] = np.arange(len(df))
+            order_cols.append("_row_ix_wthr")
+        df = df.sort_values(order_cols).reset_index(drop=True)
+
+        # Normalizaciones
+        df["points"] = self._safe_num(df["points"], fill=0.0)
+        # lluvia -> {0,1} robusto
+        if df["session_rainfall"].dtype != bool:
+            df["session_rainfall"] = (
+                df["session_rainfall"].astype(str).str.strip().str.lower()
+                .map({"true":1, "1":1, "yes":1, "false":0, "0":0, "no":0})
+                .fillna(0).astype(int)
+            )
+        else:
+            df["session_rainfall"] = df["session_rainfall"].astype(int)
+
+        def _by_driver(g: pd.DataFrame) -> pd.DataFrame:
+            g = g.copy()
+            pts  = g["points"].astype(float)
+            rain = g["session_rainfall"].astype(int)
+            dry  = 1 - rain
+
+            rain_pts_cumsum = (pts * rain).cumsum()
+            rain_cnt_cumsum = rain.cumsum()
+            dry_pts_cumsum  = (pts * dry).cumsum()
+            dry_cnt_cumsum  = dry.cumsum()
+
+            g["driver_avg_points_in_rain"] = np.where(
+                rain_cnt_cumsum > 0, rain_pts_cumsum / rain_cnt_cumsum, 0.0
+            )
+            g["driver_avg_points_in_dry"] = np.where(
+                dry_cnt_cumsum > 0, dry_pts_cumsum / dry_cnt_cumsum, 0.0
+            )
+            g["driver_rain_dry_delta"] = (
+                g["driver_avg_points_in_rain"] - g["driver_avg_points_in_dry"]
+            )
+            return g
+
+        df = df.groupby("driver", group_keys=False).apply(_by_driver)
+
+        if "_row_ix_wthr" in df.columns:
+            df.drop(columns=["_row_ix_wthr"], inplace=True, errors="ignore")
+
+        self.created_features += [
+            "driver_avg_points_in_rain",
+            "driver_avg_points_in_dry",
+            "driver_rain_dry_delta",
+        ]
+        self._log("✅ Features climáticas creadas (robusto).")
+        return df
+
+
+        def _driver_weather_stats(g: pd.DataFrame) -> pd.DataFrame:
+            g = g.copy()
+
+            # SIN shift: se asume que la carrera objetivo no está incluida en el train
+            pts = g["points"]
+
+            # Máscaras 0/1
+            rain = g["session_rainfall"]
+            dry = 1 - rain
+
+            # Enmascarar puntos por condición
+            pts_rain = pts.where(rain == 1)
+            pts_dry = pts.where(dry == 1)
+
+            # Promedios acumulados por condición (expanding)
+            # Nota: expanding ignora NaN; cuando no hay historial, queda NaN -> rellenamos a 0.0
+            g["driver_avg_points_in_rain"] = (
+                pts_rain.expanding(min_periods=1).mean().fillna(0.0)
+            )
+            g["driver_avg_points_in_dry"] = (
+                pts_dry.expanding(min_periods=1).mean().fillna(0.0)
+            )
+
+            # Delta lluvia - seco
+            g["driver_rain_dry_delta"] = (
+                g["driver_avg_points_in_rain"] - g["driver_avg_points_in_dry"]
+            )
+
+            return g
+
+        df = df.groupby("driver", group_keys=False).apply(_driver_weather_stats)
+
+        # Limpieza columnas auxiliares
+        if "_row_ix_wthr" in df.columns:
+            df.drop(columns=["_row_ix_wthr"], inplace=True, errors="ignore")
+
+        self.created_features += [
+            "driver_avg_points_in_rain",
+            "driver_avg_points_in_dry",
+            "driver_rain_dry_delta",
+        ]
+        self._log("✅ Features climáticas creadas.")
+        return df
+
 
     # -------------------- utilidades de inspección --------------------
 
     def list_created_features(self) -> List[str]:
         """Lista de features creadas en esta instancia."""
         return sorted(set(self.created_features))
-
-    def get_feature_groups(self) -> Dict[str, List[str]]:
-        """Agrupa features creadas por categoría."""
-        groups = {
-            "circuit_compatibility": [
-                "race_name_norm",
-                "circuit_type",
-                "circuit_type_encoded",
-                "is_street",
-                "is_power",
-                "is_hybrid",
-            ],
-            "momentum": [
-                "driver_points_last_3",
-                "driver_points_last_5",
-                "driver_points_cumavg",
-                "driver_races_count_prior",
-                "driver_competitiveness",
-                "team_competitiveness",
-                "points_last_3",
-                "round",
-            ],
-        }
-        return groups

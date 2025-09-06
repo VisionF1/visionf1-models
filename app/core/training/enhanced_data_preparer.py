@@ -122,6 +122,7 @@ class EnhancedDataPreparer:
         df = self.feature_engineer.create_circuit_compatibility_features(df)
         df = self.feature_engineer.create_momentum_features(df)  # sólo histórico (usa shift(1))
         df = self._process_weather_features(df)
+        df = self.feature_engineer.create_weather_performance_features(df)
 
         # Categóricas (usando encoders persistentes si inference=True)
         df = self._fit_or_transform_categorical(df, "team", inference)
@@ -138,7 +139,8 @@ class EnhancedDataPreparer:
             'points_last_3',
             'session_air_temp', 'session_track_temp', 'session_humidity', 'session_rainfall',
             'heat_index', 'weather_difficulty_index',
-            'circuit_type_encoded'
+            'circuit_type_encoded', 'driver_avg_points_in_rain',
+            'driver_avg_points_in_dry', 'driver_rain_dry_delta'
         ]
 
         available = [f for f in requested_features if f in df.columns]
