@@ -11,6 +11,7 @@ from app.core.predictors.gradient_boosting import GradientBoostingPredictor
 from app.config import DATA_IMPORTANCE
 from pathlib import Path
 import json
+from sklearn.model_selection import GroupKFold
 
 INFERENCE_MANIFEST_PATH = Path("app/models_cache/inference_manifest.json")
 CATEGORICAL_COLS = ["driver", "team", "race_name", "circuit_type"]
@@ -158,7 +159,24 @@ class ModelTrainer:
             self._audit_features(feature_names, target_name=getattr(y_train, 'name', None))
         except Exception as _e:
             print(f"⚠️  Auditoría de features falló: {_e}")
-        cv_splitter = self._get_cv_splitter(X_train)
+
+
+        groups = None
+        try:
+            if df_original is not None:
+                if train_indices is not None:
+                    df_train = df_original.iloc[train_indices].copy()
+                else:
+                    # fallback: asumimos que X_train corresponde a las primeras filas
+                    df_train = df_original.iloc[:len(X_train)].copy()
+                # race_id = "year_race_name"
+                df_train["race_id"] = df_train["year"].astype(str) + "_" + df_train["race_name"].astype(str)
+                groups = df_train["race_id"].values
+        except Exception as _e:
+            print(f"⚠️ No pude construir groups para GroupKFold: {_e}")
+
+        cv_splitter = self._get_cv_splitter(X_train, groups=groups)
+
 
         for name, model_config in self.models.items():
             print(f"\n{'='*50}")
@@ -166,8 +184,7 @@ class ModelTrainer:
             print(f"{'='*50}")
 
             self._train_single_model_with_cv(
-                name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights
-            )
+                name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights, groups)
 
         self._show_detailed_comparison()
         self._save_training_results(self.results, label_encoder, feature_names)
@@ -225,17 +242,32 @@ class ModelTrainer:
             if model_name == 'GradientBoosting' and 'learning_rate' in param_grid:
                 param_grid['learning_rate'] = [0.03, 0.05]
 
-    def _get_cv_splitter(self, X_train):
+
+
+    def _get_cv_splitter(self, X_train, groups=None):
+        # Si hay groups válidos -> GroupKFold; si no, caemos a KFold como fallback
+        if groups is not None and len(groups) == len(X_train):
+            n_unique = len(np.unique(groups))
+            n_splits = min(5, max(3, n_unique))  # evita split>n_unique_groups
+            print(f"📊 Usando GroupKFold con {n_splits} splits (grupo=race_id)")
+            return GroupKFold(n_splits=n_splits)
+        # Fallback previo
         n_samples = len(X_train)
-        # Usar KFold por defecto (sin dependencia temporal)
         n_splits = max(3, min(5, n_samples // 5))
         print(f"📊 Usando KFold con {n_splits} splits")
         return KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-    def _train_single_model_with_cv(self, name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights=None):
+
+    def _train_single_model_with_cv(self, name, model_config, X_train, X_test, y_train, y_test, cv_splitter, sample_weights=None, groups=None):
         try:
             model_class = model_config['model_class']
             base_model = model_class()
+
+            fit_kwargs = {}
+            if sample_weights is not None:
+                fit_kwargs["sample_weight"] = sample_weights
+            if groups is not None:
+                fit_kwargs["groups"] = groups
 
             print(f"🔧 Optimizando hiperparámetros para {name}...")
 
@@ -267,7 +299,7 @@ class ModelTrainer:
 
                     # Aplicar sample_weights si están disponibles
                     if sample_weights is not None:
-                        grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+                        grid_search.fit(X_train, y_train, **fit_kwargs)
                     else:
                         grid_search.fit(X_train, y_train)
 
@@ -294,7 +326,7 @@ class ModelTrainer:
                     
                     # Aplicar sample_weights si están disponibles
                     if sample_weights is not None:
-                        grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+                        grid_search.fit(X_train, y_train, **fit_kwargs)
                     else:
                         grid_search.fit(X_train, y_train)
                     
@@ -317,7 +349,8 @@ class ModelTrainer:
             cv_scores = cross_val_score(
                 best_model, X_train, y_train, 
                 cv=cv_splitter, 
-                scoring='neg_mean_squared_error'
+                scoring='neg_mean_squared_error',
+                groups=groups 
             )
 
             cv_mse_scores = -cv_scores
