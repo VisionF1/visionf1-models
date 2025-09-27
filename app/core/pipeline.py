@@ -183,9 +183,24 @@ class Pipeline:
         except Exception:
             round_num = int(nr.get("race_number", 0)) or None
 
-        # Meta y predicción sin FP3
+        # Intentar recolectar info del mismo evento para usar SQ/S si existen
+        event_df = pd.DataFrame()
+        try:
+            from app.data.collectors.fastf1_collector import FastF1Collector
+            event_range = [{"year": year, "race_name": race_name, "round_number": round_num or 0}]
+            ev_collector = FastF1Collector(event_range)
+            ev_collector.collect_data()
+            ev = ev_collector.get_data()
+            if ev is not None and not ev.empty:
+                cols = [c for c in ["driver", "sq_best_time", "sprint_position"] if c in ev.columns]
+                if cols:
+                    event_df = ev[cols].copy()
+        except Exception as e:
+            print(f"ℹ️ No se pudo recolectar info de sprint/SQ del evento: {e}")
+
+        # Meta y predicción con refinamiento por sprint/SQ si está disponible
         meta = {"year": year, "race_name": race_name, "round": round_num}
-        preds = predictor.predict_next_event(meta)
+        preds = predictor.predict_next_event(meta, event_df=event_df if not event_df.empty else None)
 
         # Guardar CSV
         out_path = "app/models_cache/quali_predictions_latest.csv"

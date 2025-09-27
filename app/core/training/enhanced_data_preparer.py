@@ -292,9 +292,15 @@ class EnhancedDataPreparer:
         out_cols = [
             "driver", "team", "race_name", "year", "round", "weekend_key",
             "fp3_best_time", "quali_best_time", "ratio_fp3_quali", "delta_fp3_quali_s",
-            "fp3_laps_count", "event_delta_median_s"
+            "fp3_laps_count", "event_delta_median_s",
+            # Sprint-related
+            "sq_best_time", "sq_position", "sprint_position", "sprint_best_lap_time", "sprint_points"
         ]
         for c in ["fp3_laps_count"]:
+            if c not in out.columns:
+                out[c] = np.nan
+        # Ensure sprint columns exist
+        for c in ["sq_best_time", "sq_position", "sprint_position", "sprint_best_lap_time", "sprint_points"]:
             if c not in out.columns:
                 out[c] = np.nan
         out[out_cols].to_csv(csv_path, index=False)

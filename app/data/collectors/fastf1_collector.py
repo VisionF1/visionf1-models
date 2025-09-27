@@ -149,15 +149,17 @@ class FastF1Collector:
             return None
 
     def _extract_complete_weekend_data(self, year, race_identifier, race_name):
-        """Extrae datos completos del fin de semana: FP1, FP2, FP3, Q, R"""
+        """Extrae datos completos del fin de semana: FP1, FP2, FP3, Q, R, y sesiones Sprint (SQ, S) si existen"""
         try:
             # Definir sesiones a recolectar
             sessions_config = {
                 'FP1': 'FP1',
                 'FP2': 'FP2', 
                 'FP3': 'FP3',
-                'Q': 'Q',    # Clasificación completa
-                'R': 'R'     # Carrera
+                'Q': 'Q',    # Clasificación completa GP
+                'R': 'R',    # Carrera GP
+                'SQ': 'SQ',  # Clasificación Sprint (si existe)
+                'S': 'S',    # Sprint (si existe)
             }
             
             weekend_data = {}
@@ -180,6 +182,12 @@ class FastF1Collector:
                     elif session_name == 'R':
                         # Datos especiales de carrera
                         session_data = self._extract_race_data(session)
+                    elif session_name == 'SQ':
+                        # Clasificación sprint (prefijo sq_)
+                        session_data = self._extract_sprint_quali_data(session)
+                    elif session_name == 'S':
+                        # Sprint (prefijo sprint_)
+                        session_data = self._extract_sprint_data(session)
                     else:
                         # Datos de práctica libre
                         session_data = self._extract_practice_data(session, session_name)
@@ -266,6 +274,90 @@ class FastF1Collector:
             
         except Exception as e:
             print(f"Error extrayendo datos de clasificación: {e}")
+            return {}
+
+    def _extract_sprint_quali_data(self, session):
+        """Extrae datos de clasificación sprint (SQ). Mapea a prefijo sq_."""
+        try:
+            out = {}
+            try:
+                print("   🔄 Loading sprint qualifying session data...")
+                session.load(weather=True)
+            except Exception as e:
+                print(f"   ⚠️  No se pudo cargar completamente SQ: {e}")
+
+            weather = self._extract_session_weather_data(session)
+
+            if hasattr(session, 'results') and not session.results.empty:
+                for _, dr in session.results.iterrows():
+                    d = dr['Abbreviation']
+                    # Algunos proveedores usan Q1/Q2/Q3 para SQ; intentamos ambos
+                    sq1 = self._time_to_seconds(dr.get('SQ1', None)) or self._time_to_seconds(dr.get('Q1', None))
+                    sq2 = self._time_to_seconds(dr.get('SQ2', None)) or self._time_to_seconds(dr.get('Q2', None))
+                    sq3 = self._time_to_seconds(dr.get('SQ3', None)) or self._time_to_seconds(dr.get('Q3', None))
+                    best = None
+                    for t in (sq3, sq2, sq1):
+                        if t is not None:
+                            best = t
+                            break
+                    out[d] = {
+                        'sq_position': int(dr['Position']) if pd.notna(dr.get('Position')) else 20,
+                        'sq1_time': sq1,
+                        'sq2_time': sq2,
+                        'sq3_time': sq3,
+                        'sq_best_time': best,
+                        **weather
+                    }
+
+            # completar desde laps si faltan
+            if hasattr(session, 'laps') and not session.laps.empty:
+                for d in session.laps['Driver'].unique():
+                    drv_laps = session.laps[session.laps['Driver'] == d]
+                    vl = drv_laps.dropna(subset=['LapTime'])
+                    if not vl.empty:
+                        bl = vl.loc[vl['LapTime'].idxmin()]
+                        best_s = bl['LapTime'].total_seconds()
+                        if d not in out:
+                            out[d] = {'sq_position': 20, 'sq1_time': None, 'sq2_time': None, 'sq3_time': None, 'sq_best_time': best_s, **weather}
+                        else:
+                            if out[d].get('sq_best_time') is None:
+                                out[d]['sq_best_time'] = best_s
+            return out
+        except Exception as e:
+            print(f"Error extrayendo SQ: {e}")
+            return {}
+
+    def _extract_sprint_data(self, session):
+        """Extrae datos de la carrera Sprint. Prefijo sprint_."""
+        try:
+            out = {}
+            if not hasattr(session, 'weather_data') or session.weather_data is None:
+                print("   🔄 Loading sprint session data...")
+                session.load(weather=True)
+            weather = self._extract_session_weather_data(session)
+
+            if hasattr(session, 'results') and not session.results.empty:
+                for _, dr in session.results.iterrows():
+                    d = dr['Abbreviation']
+                    out[d] = {
+                        'sprint_position': int(dr['Position']) if pd.notna(dr.get('Position')) else 20,
+                        'sprint_points': float(dr['Points']) if pd.notna(dr.get('Points')) else 0.0,
+                        **weather
+                    }
+            # best lap sprint
+            if hasattr(session, 'laps') and not session.laps.empty:
+                for d in session.laps['Driver'].unique():
+                    drv_laps = session.laps[session.laps['Driver'] == d]
+                    vl = drv_laps.dropna(subset=['LapTime'])
+                    if not vl.empty:
+                        bl = vl.loc[vl['LapTime'].idxmin()]
+                        best_s = bl['LapTime'].total_seconds()
+                        if d not in out:
+                            out[d] = {'sprint_position': 20, 'sprint_points': 0.0, **weather}
+                        out[d]['sprint_best_lap_time'] = best_s
+            return out
+        except Exception as e:
+            print(f"Error extrayendo Sprint: {e}")
             return {}
 
     def _extract_race_data(self, session):
@@ -408,6 +500,19 @@ class FastF1Collector:
                     if cand:
                         driver_record['quali_best_time'] = min(cand)
 
+                # Derivar faltantes: quali_best_time, sq_best_time
+                if driver_record.get('quali_best_time') in (None, float('nan')):
+                    q1 = driver_record.get('q1_time'); q2 = driver_record.get('q2_time'); q3 = driver_record.get('q3_time')
+                    best_lap = driver_record.get('quali_best_lap_from_laps')
+                    cand = [t for t in (q3, q2, q1, best_lap) if t is not None]
+                    if cand:
+                        driver_record['quali_best_time'] = min(cand)
+                if driver_record.get('sq_best_time') in (None, float('nan')):
+                    sq1 = driver_record.get('sq1_time'); sq2 = driver_record.get('sq2_time'); sq3 = driver_record.get('sq3_time')
+                    cand_sq = [t for t in (sq3, sq2, sq1) if t is not None]
+                    if cand_sq:
+                        driver_record['sq_best_time'] = min(cand_sq)
+
                 # Rellenar valores faltantes con valores por defecto
                 driver_record = self._fill_missing_weekend_data(driver_record)
 
@@ -430,13 +535,25 @@ class FastF1Collector:
             'q1_time': None,
             'q2_time': None,
             'q3_time': None,
-            
+
+            # Sprint Qualifying (SQ)
+            'sq_position': 20,
+            'sq_best_time': None,
+            'sq1_time': None,
+            'sq2_time': None,
+            'sq3_time': None,
+
             # Carrera
             'race_position': 20,
             'race_best_lap_time': None,
             'clean_air_pace': None,
             'points': 0.0,
             'total_laps': 0,
+
+            # Sprint
+            'sprint_position': 20,
+            'sprint_best_lap_time': None,
+            'sprint_points': 0.0,
             
             # Práctica libre
             'fp1_best_time': None,
