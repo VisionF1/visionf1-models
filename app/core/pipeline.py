@@ -8,6 +8,9 @@ from app.core.training.enhanced_data_preparer import EnhancedDataPreparer
 from app.core.training.model_trainer import ModelTrainer
 from app.core.utils.race_range_builder import RaceRangeBuilder
 from app.core.predictors.simple_position_predictor import SimplePositionPredictor
+from app.core.predictors.fp3_quali_predictor import Fp3QualiPredictor
+from app.core.predictors.quali_recent_predictor import RecentQualiPredictor
+from app.config import PREDICTION_CONFIG
 
 class Pipeline:
     """Pipeline principal con features avanzadas"""
@@ -118,6 +121,87 @@ class Pipeline:
         print(f"💾 Predicciones guardadas: {output_file}")
 
         return predictions_df
+
+    # ================== FP3 → Quali (2025) ==================
+    def train_quali_from_fp3(self, year: int = 2025) -> bool:
+        """Construye dataset de qualis recientes y entrena predictor basado SOLO en últimas qualis.
+        Guarda el modelo y devuelve True si todo OK.
+
+        Nota: Mantenemos el nombre por compatibilidad con el CLI."""
+        try:
+            years = [max(2024, int(year)-1), int(year)]
+            print(f"🚀 Construyendo dataset de qualis para años {years}...")
+            dataset = self.data_preparer.build_fp3_quali_dataset(year=years)
+            if dataset is None or dataset.empty:
+                print("❌ No se pudo construir el dataset de quali")
+                return False
+
+            print("🧠 Entrenando RecentQualiPredictor (sin FP3)...")
+            predictor = RecentQualiPredictor()
+            predictor.fit(dataset, n_recent=3)
+            predictor.save("app/models_cache/quali_recent_model.pkl")
+            print("✅ Modelo de qualis recientes guardado en app/models_cache/quali_recent_model.pkl")
+
+            # Backtest opcional y guardado
+            try:
+                metrics = predictor.backtest(dataset)
+                if metrics and metrics.get("events", 0) > 0:
+                    dfm = pd.DataFrame([metrics])
+                    dfm.to_csv("app/models_cache/quali_backtest_2025.csv", index=False)
+                    print("📊 Backtest guardado: app/models_cache/quali_backtest_2025.csv")
+                    print(f"   MAE={metrics.get('mae_s', float('nan')):.3f}s  MedAE={metrics.get('medae_s', float('nan')):.3f}s  Eventos={metrics.get('events', 0)}")
+            except Exception as e:
+                print(f"⚠️ Backtest omitido: {e}")
+
+            return True
+        except Exception as e:
+            print(f"❌ Error entrenando quali desde FP3: {e}")
+            return False
+
+    def predict_quali_next_race(self) -> pd.DataFrame:
+        """Predice quali de la próxima carrera usando SOLO últimas qualis.
+        Genera app/models_cache/quali_predictions_latest.csv"""
+        # Cargar modelo
+        predictor = RecentQualiPredictor()
+        if not predictor.load("app/models_cache/quali_recent_model.pkl"):
+            print("ℹ️ No existe modelo de qualis recientes. Entrenando ahora...")
+            ok = self.train_quali_from_fp3(year=2025)
+            if not ok or not predictor.load("app/models_cache/quali_recent_model.pkl"):
+                print("❌ No se pudo cargar/entrenar el modelo de qualis recientes")
+                return pd.DataFrame()
+
+        # Identificar próxima carrera
+        nr = PREDICTION_CONFIG.get("next_race", {})
+        year = int(nr.get("year", 2025))
+        race_name = str(nr.get("race_name", ""))
+
+        # Obtener round desde schedule
+        try:
+            import fastf1
+            schedule = fastf1.get_event_schedule(year)
+            round_num = int(schedule[schedule["EventName"] == race_name]["RoundNumber"].iloc[0])
+        except Exception:
+            round_num = int(nr.get("race_number", 0)) or None
+
+        # Meta y predicción sin FP3
+        meta = {"year": year, "race_name": race_name, "round": round_num}
+        preds = predictor.predict_next_event(meta)
+
+        # Guardar CSV
+        out_path = "app/models_cache/quali_predictions_latest.csv"
+        preds.to_csv(out_path, index=False)
+        print(f"💾 Predicciones de quali guardadas: {out_path}")
+
+        # Mostrar Top 10
+        try:
+            head = preds.head(10)
+            print("\n🏁 Top 10 Predicción Quali")
+            for _, r in head.iterrows():
+                print(f"P{int(r['pred_rank']):<2} {r['driver']:<4} {str(r['team'])[:16]:<16} {r['pred_best_quali_lap']}")
+        except Exception:
+            pass
+
+        return preds
 
     def _load_cached_data(self):
         """Carga datos desde cache"""
@@ -243,3 +327,16 @@ class Pipeline:
                 print(f"📝 Info del dataset procesado guardada: {info_file}")
             except:
                 print("❌ No se pudo guardar información del dataset procesado")
+
+    # Utilidad: forzar descarga fresca de eventos específicos
+    def force_download_events(self, events: list[dict], use_persistent_fastf1_cache: bool = True) -> pd.DataFrame:
+        """
+        Descarga fresca (ignorando PKL locales) para una lista de eventos [{year, race_name, round_number?}].
+        Devuelve DataFrame combinado de esos eventos.
+        """
+        cache_dir = "app/models_cache/fastf1"
+        collector = FastF1Collector(events, force_refresh=True, fastf1_cache_dir=(cache_dir if use_persistent_fastf1_cache else None))
+        collector.collect_data(force_refresh=True)
+        df = collector.get_data()
+        print(f"✅ Descarga forzada completada: {len(df)} filas")
+        return df

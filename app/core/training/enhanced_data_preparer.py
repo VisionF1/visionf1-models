@@ -173,3 +173,130 @@ class EnhancedDataPreparer:
 
 
 
+    # ---------- FP3 → Quali dataset (2025) ----------
+    def build_fp3_quali_dataset(self, year: int | list[int] = 2025) -> pd.DataFrame:
+        """Construye dataset FP3→Quali para uno o varios años y lo guarda en cache.
+
+        Columnas clave del output:
+        - year, round, race_name, weekend_key
+        - driver, team
+        - fp3_best_time, fp3_laps_count
+        - quali_best_time
+        - ratio_fp3_quali, delta_fp3_quali_s
+        - event_delta_median_s (proxy evolución)
+        """
+        from app.core.utils.race_range_builder import RaceRangeBuilder
+        from app.data.collectors.fastf1_collector import FastF1Collector
+        from app.data.preprocessors.data_cleaner import clean_data
+        import fastf1
+
+        # 1) Construir rango de carreras para los años solicitados
+        years = year
+        if isinstance(years, (int, float, str)):
+            try:
+                years = [int(years)]
+            except Exception:
+                years = [2025]
+        years = [int(y) for y in years]
+        cfg = {"years": years, "max_races_per_year": 30}
+        rr = RaceRangeBuilder().build_race_range(cfg)
+        collector = FastF1Collector(rr)
+        collector.collect_data()
+        df = collector.get_data()
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        # 2) Limpieza básica (no eliminar filas por columnas genéricas)
+        # Evitar usar clean_data aquí porque elimina filas por 'best_lap_time' o 'clean_air_pace'
+        # que no aplican a quali; nos quedamos con deduplicación ligera más abajo
+        df = df.copy()
+
+        # 3) Round mapping desde schedule (por (year, race_name))
+        name_to_round = {}
+        try:
+            for y in years:
+                try:
+                    sched = fastf1.get_event_schedule(int(y))
+                    for _, r in sched.iterrows():
+                        rn = int(r.get("RoundNumber")) if pd.notna(r.get("RoundNumber")) else None
+                        evn = str(r.get("EventName"))
+                        if rn is not None and evn:
+                            name_to_round[(int(y), evn)] = rn
+                except Exception:
+                    continue
+        except Exception:
+            name_to_round = {}
+
+        # 4) Selección/derivación de columnas
+        out = df.copy()
+        if "year" in out.columns:
+            out = out[out["year"].isin(years)]
+        # columnas mínimas
+        for c in ["driver", "team", "race_name", "year"]:
+            if c not in out.columns:
+                out[c] = None
+        # round + weekend_key
+        def _map_round(row):
+            try:
+                return name_to_round.get((int(row["year"]), str(row["race_name"])) , np.nan)
+            except Exception:
+                return np.nan
+        out["round"] = out.apply(_map_round, axis=1)
+        out["weekend_key"] = out.apply(lambda r: f"{int(r['year'])}_{str(r['race_name'])}", axis=1)
+        # fp3/quali best
+        out["fp3_best_time"] = pd.to_numeric(out.get("fp3_best_time", np.nan), errors="coerce")
+        # Derivar quali_best_time si falta
+        if "quali_best_time" not in out.columns or out["quali_best_time"].isna().all():
+            qcols = []
+            for c in ("q1_time", "q2_time", "q3_time", "quali_best_lap_from_laps"):
+                if c in out.columns:
+                    qcols.append(pd.to_numeric(out[c], errors="coerce"))
+            if qcols:
+                out["quali_best_time"] = pd.concat(qcols, axis=1).min(axis=1)
+        out["quali_best_time"] = pd.to_numeric(out.get("quali_best_time", np.nan), errors="coerce")
+
+        # 5) Filtrar válidos SOLO por quali (permitir fp3 faltante)
+        out = out.dropna(subset=["quali_best_time"]).copy()
+        out = out[(out["quali_best_time"] > 0)]
+        if out.empty:
+            return pd.DataFrame()
+
+        # 6) Derivadas (ratio/delta solo si hay FP3)
+        out["ratio_fp3_quali"] = np.nan
+        out["delta_fp3_quali_s"] = np.nan
+        mask_fp3 = pd.to_numeric(out["fp3_best_time"], errors="coerce").notna() & (out["fp3_best_time"] > 0)
+        out.loc[mask_fp3, "ratio_fp3_quali"] = out.loc[mask_fp3, "quali_best_time"] / out.loc[mask_fp3, "fp3_best_time"]
+        out.loc[mask_fp3, "delta_fp3_quali_s"] = out.loc[mask_fp3, "quali_best_time"] - out.loc[mask_fp3, "fp3_best_time"]
+        # winsor simple
+        rl, rh = 0.05, 0.95
+        if out["ratio_fp3_quali"].notna().any():
+            out["ratio_fp3_quali_w"] = out["ratio_fp3_quali"].clip(
+                lower=out["ratio_fp3_quali"].quantile(rl), upper=out["ratio_fp3_quali"].quantile(rh)
+            )
+        else:
+            out["ratio_fp3_quali_w"] = np.nan
+        if out["delta_fp3_quali_s"].notna().any():
+            out["delta_fp3_quali_w_s"] = out["delta_fp3_quali_s"].clip(
+                lower=out["delta_fp3_quali_s"].quantile(rl), upper=out["delta_fp3_quali_s"].quantile(rh)
+            )
+        else:
+            out["delta_fp3_quali_w_s"] = np.nan
+        # proxy por evento
+        ev = out.groupby("weekend_key")["delta_fp3_quali_w_s"].median().rename("event_delta_median_s")
+        out = out.merge(ev, on="weekend_key", how="left")
+
+        # 7) Guardar CSV
+        cache_dir = Path("app/models_cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = cache_dir / "quali_dataset_latest.csv"
+        out_cols = [
+            "driver", "team", "race_name", "year", "round", "weekend_key",
+            "fp3_best_time", "quali_best_time", "ratio_fp3_quali", "delta_fp3_quali_s",
+            "fp3_laps_count", "event_delta_median_s"
+        ]
+        for c in ["fp3_laps_count"]:
+            if c not in out.columns:
+                out[c] = np.nan
+        out[out_cols].to_csv(csv_path, index=False)
+        print(f"💾 Dataset FP3→Quali guardado: {csv_path}")
+        return out[out_cols]

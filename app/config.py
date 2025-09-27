@@ -52,9 +52,9 @@ RACE_RANGE = {
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "United States Grand Prix", 
-        "circuit_name": "Circuit of the Americas",
-        "race_number": 19  # Número de carrera en la temporada 2025
+        "race_name": "Italian Grand Prix", 
+        "circuit_name": "Autodromo Nazionale Monza",
+        "race_number": 16  # Número de carrera en la temporada 2025
     },
     "use_historical_data": True,
     

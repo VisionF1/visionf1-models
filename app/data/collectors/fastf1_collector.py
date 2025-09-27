@@ -6,33 +6,52 @@ from datetime import datetime, timedelta
 from fastf1 import plotting
 
 class FastF1Collector:
-    def __init__(self, race_range):
+    def __init__(self, race_range, force_refresh: bool = False, fastf1_cache_dir: str | None = None):
         self.race_range = race_range
         self.data = []
         self.cache_dir = "app/models_cache/raw_data"
+        self.force_refresh = bool(force_refresh)
+        # habilitar cache persistente de fastf1 si se indica
+        if fastf1_cache_dir:
+            try:
+                os.makedirs(fastf1_cache_dir, exist_ok=True)
+                fastf1.Cache.enable_cache(fastf1_cache_dir)
+                print(f"📦 fastf1 cache: {fastf1_cache_dir}")
+            except Exception as e:
+                print(f"⚠️ No se pudo habilitar fastf1 cache persistente: {e}")
         
         # Crear directorio de cache si no existe
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir, exist_ok=True)
 
-    def collect_data(self):
-        """Recolecta datos usando cache inteligente"""
+    def collect_data(self, force_refresh: bool | None = None):
+        """Recolecta datos usando cache inteligente.
+        Si force_refresh es True, ignora y sustituye el cache por datos frescos."""
         print(f"🔍 Verificando cache para {len(self.race_range)} carreras...")
-        
+        if force_refresh is None:
+            force_refresh = self.force_refresh
+
         fresh_data_collected = 0
         cached_data_used = 0
         
         for race in self.race_range:
             cache_file = self._get_cache_filename(race)
             
-            # Intentar cargar desde cache primero
-            cached_data = self._load_from_cache(cache_file)
+            # Intentar cargar desde cache primero (si no se fuerza refresco)
+            cached_data = None if force_refresh else self._load_from_cache(cache_file)
             
             if cached_data is not None and not cached_data.empty:
                 self.data.append(cached_data)
                 cached_data_used += 1
                 print(f"📦 Cache usado para carrera {race['race_name']} ({race['year']})")
             else:
+                # Si se fuerza refresco, eliminar cache previo si existiera
+                if force_refresh and os.path.exists(cache_file):
+                    try:
+                        os.remove(cache_file)
+                        print(f"🗑️  Cache eliminado para refrescar: {os.path.basename(cache_file)}")
+                    except Exception as e:
+                        print(f"⚠️ No se pudo eliminar cache previo: {e}")
                 # Cache no existe o está expirado, descargar datos frescos
                 fresh_data = self._download_fresh_data(race)
                 if fresh_data is not None and not fresh_data.empty:
@@ -187,10 +206,12 @@ class FastF1Collector:
         try:
             qualifying_data = {}
             
-            # 🔥 ENSURE SESSION IS LOADED BEFORE ACCESSING DATA
-            if not hasattr(session, 'results') or session.results is None:
+            # 🔥 Asegurar carga completa de la sesión (resultados + laps + clima)
+            try:
                 print(f"   🔄 Loading qualifying session data...")
-                session.load(weather=True)  # Cargar datos meteorológicos
+                session.load(weather=True)
+            except Exception as e:
+                print(f"   ⚠️  No se pudo cargar completamente la sesión de quali: {e}")
             
             # Obtener condiciones meteorológicas promedio para la sesión
             weather_conditions = self._extract_session_weather_data(session)
@@ -199,35 +220,47 @@ class FastF1Collector:
             if hasattr(session, 'results') and not session.results.empty:
                 for _, driver_result in session.results.iterrows():
                     driver = driver_result['Abbreviation']
-                    
+                    q1 = self._time_to_seconds(driver_result.get('Q1', None))
+                    q2 = self._time_to_seconds(driver_result.get('Q2', None))
+                    q3 = self._time_to_seconds(driver_result.get('Q3', None))
+                    best = None
+                    for t in (q3, q2, q1):
+                        if t is not None:
+                            best = t
+                            break
                     qualifying_data[driver] = {
                         'quali_position': int(driver_result['Position']) if pd.notna(driver_result['Position']) else 20,
-                        'q1_time': self._time_to_seconds(driver_result.get('Q1', None)),
-                        'q2_time': self._time_to_seconds(driver_result.get('Q2', None)),
-                        'q3_time': self._time_to_seconds(driver_result.get('Q3', None)),
-                        'quali_best_time': self._time_to_seconds(driver_result.get('Q3', driver_result.get('Q2', driver_result.get('Q1', None)))),
+                        'q1_time': q1,
+                        'q2_time': q2,
+                        'q3_time': q3,
+                        'quali_best_time': best,
                         'grid_position': int(driver_result['GridPosition']) if pd.notna(driver_result['GridPosition']) else 20,
                         **weather_conditions  # Agregar condiciones meteorológicas
                     }
             
-            # También obtener datos de las vueltas de clasificación si no hay resultados
-            if not qualifying_data and hasattr(session, 'laps') and not session.laps.empty:
+            # Completar con datos de laps para drivers faltantes o sin tiempo
+            if hasattr(session, 'laps') and not session.laps.empty:
                 for driver in session.laps['Driver'].unique():
                     driver_laps = session.laps[session.laps['Driver'] == driver]
                     valid_laps = driver_laps.dropna(subset=['LapTime'])
-                    
                     if not valid_laps.empty:
                         best_lap = valid_laps.loc[valid_laps['LapTime'].idxmin()]
-                        
-                        qualifying_data[driver] = {
-                            'quali_position': 20,  # Default if no results available
-                            'grid_position': 20,
-                            'quali_best_lap_from_laps': best_lap['LapTime'].total_seconds(),
-                            'quali_sector1': self._time_to_seconds(best_lap.get('Sector1Time', None)),
-                            'quali_sector2': self._time_to_seconds(best_lap.get('Sector2Time', None)),
-                            'quali_sector3': self._time_to_seconds(best_lap.get('Sector3Time', None)),
-                            **weather_conditions  # Agregar condiciones meteorológicas
-                        }
+                        best_s = best_lap['LapTime'].total_seconds()
+                        if driver not in qualifying_data:
+                            qualifying_data[driver] = {
+                                'quali_position': 20,
+                                'grid_position': 20,
+                                'q1_time': None,
+                                'q2_time': None,
+                                'q3_time': None,
+                                'quali_best_time': best_s,
+                                'quali_best_lap_from_laps': best_s,
+                                **weather_conditions
+                            }
+                        else:
+                            if qualifying_data[driver].get('quali_best_time') is None:
+                                qualifying_data[driver]['quali_best_time'] = best_s
+                                qualifying_data[driver]['quali_best_lap_from_laps'] = best_s
             
             return qualifying_data
             
@@ -364,10 +397,20 @@ class FastF1Collector:
                 for session_name, session_data in weekend_data.items():
                     if driver in session_data:
                         driver_record.update(session_data[driver])
-                
+
+                # Fallback interno: si falta quali_best_time, derivarlo de q1/q2/q3 o laps
+                if driver_record.get('quali_best_time') in (None, float('nan')):
+                    q1 = driver_record.get('q1_time')
+                    q2 = driver_record.get('q2_time')
+                    q3 = driver_record.get('q3_time')
+                    best_lap = driver_record.get('quali_best_lap_from_laps')
+                    cand = [t for t in (q3, q2, q1, best_lap) if t is not None]
+                    if cand:
+                        driver_record['quali_best_time'] = min(cand)
+
                 # Rellenar valores faltantes con valores por defecto
                 driver_record = self._fill_missing_weekend_data(driver_record)
-                
+
                 combined_data.append(driver_record)
             
             return pd.DataFrame(combined_data)
