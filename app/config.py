@@ -52,9 +52,9 @@ RACE_RANGE = {
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "Italian Grand Prix", 
-        "circuit_name": "Autodromo Nazionale Monza",
-        "race_number": 16  # Número de carrera en la temporada 2025
+        "race_name": "Singapore Grand Prix", 
+        "circuit_name": "Marina Bay Street Circuit",
+        "race_number": 18  # Número de carrera en la temporada 2025
     },
     "use_historical_data": True,
     
@@ -208,4 +208,10 @@ ADAPTATION_SYSTEM = {
 # 🔥 FACTORES DE AJUSTE CONSOLIDADOS
 ADJUSTMENT_FACTORS = {
     "use_progressive_adaptation": PENALTIES["use_progressive"]
+}
+
+# ⚙️ CONFIGURACIÓN DE PREDICCIÓN DE CARRERA
+RACE_PREDICTION = {
+    # Peso de la grilla en la mezcla carrera = (1-β)*modelo + β*grilla
+    "grid_mix_beta": 0.35
 }

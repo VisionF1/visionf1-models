@@ -10,7 +10,7 @@ from app.core.utils.race_range_builder import RaceRangeBuilder
 from app.core.predictors.simple_position_predictor import SimplePositionPredictor
 from app.core.predictors.fp3_quali_predictor import Fp3QualiPredictor
 from app.core.predictors.quali_recent_predictor import RecentQualiPredictor
-from app.config import PREDICTION_CONFIG
+from app.config import PREDICTION_CONFIG, RACE_PREDICTION
 
 class Pipeline:
     """Pipeline principal con features avanzadas"""
@@ -355,3 +355,107 @@ class Pipeline:
         df = collector.get_data()
         print(f"✅ Descarga forzada completada: {len(df)} filas")
         return df
+
+    # ================== Orquestación end-to-end (opción 6) ==================
+    def predict_race_from_quali_grid(self, beta: float | None = None) -> pd.DataFrame:
+        """Predice la carrera usando la grilla (real si existe, si no la predicha por quali).
+        - beta: peso de la grilla en la mezcla (0..1)."""
+        print("🏎️ Generando predicción de carrera combinando modelo + grilla...")
+
+        # 1) Predicción base de carrera (modelo entrenado)
+        sp = SimplePositionPredictor()
+        base = sp.predict_positions_2025()
+        base = base.rename(columns={
+            "final_position": "base_rank",
+            "predicted_position": "base_score",
+        })
+        base = base[["driver", "team", "base_rank", "base_score"]].copy()
+
+        # 2) Obtener grilla: intentar real del evento, luego predicha por quali
+        nr = PREDICTION_CONFIG.get("next_race", {})
+        year = int(nr.get("year", 2025))
+        race_name = str(nr.get("race_name", ""))
+        grid_df = None
+        try:
+            # recolectar evento y buscar grid_position de Q
+            event_range = [{"year": year, "race_name": race_name, "round_number": nr.get("race_number", 0)}]
+            evc = FastF1Collector(event_range)
+            evc.collect_data()
+            ev = evc.get_data()
+            if ev is not None and not ev.empty and "grid_position" in ev.columns:
+                tmp = ev[["driver", "grid_position"]].dropna().copy()
+                if not tmp.empty:
+                    tmp["grid_position"] = pd.to_numeric(tmp["grid_position"], errors="coerce")
+                    grid_df = tmp
+        except Exception:
+            grid_df = None
+
+        if grid_df is None or grid_df.empty:
+            # usar quali predicha
+            try:
+                quali_path = "app/models_cache/quali_predictions_latest.csv"
+                q = pd.read_csv(quali_path)
+                if not q.empty:
+                    grid_df = q[["driver", "pred_rank"]].rename(columns={"pred_rank": "grid_position"})
+            except Exception:
+                grid_df = None
+
+        if grid_df is None or grid_df.empty:
+            print("⚠️ No hay grilla disponible (real ni predicha). Devuelvo predicción base de carrera.")
+            out = base.copy()
+            out = out.sort_values("base_score", ascending=True).reset_index(drop=True)
+            out["final_position"] = range(1, len(out) + 1)
+            out.rename(columns={"base_score": "predicted_position"}, inplace=True)
+            out = out[["final_position", "driver", "team", "predicted_position"]]
+            return out
+
+        # 3) Mezclar
+        df = base.merge(grid_df, on="driver", how="left")
+        # si no hay grid para alguno, usar promedio
+        if df["grid_position"].isna().any():
+            df["grid_position"].fillna(df["grid_position"].median() if df["grid_position"].notna().any() else 10.5, inplace=True)
+        df["grid_position"] = pd.to_numeric(df["grid_position"], errors="coerce").fillna(10.5)
+
+        # beta desde config si no se pasa explícito
+        if beta is None:
+            try:
+                beta = float(RACE_PREDICTION.get("grid_mix_beta", 0.40))
+            except Exception:
+                beta = 0.40
+        beta = max(0.0, min(1.0, float(beta)))
+        df["race_score"] = (1 - beta) * df["base_score"].astype(float) + beta * df["grid_position"].astype(float)
+        df = df.sort_values("race_score", ascending=True).reset_index(drop=True)
+        df["final_position"] = range(1, len(df) + 1)
+
+        out = df[["final_position", "driver", "team", "base_score", "grid_position", "race_score"]].copy()
+        out.rename(columns={"base_score": "model_position_score", "race_score": "predicted_position"}, inplace=True)
+
+        # Guardar
+        out_path = "app/models_cache/race_predictions_latest.csv"
+        out.to_csv(out_path, index=False)
+        print(f"💾 Predicción de carrera guardada: {out_path}")
+        return out
+
+    def train_and_predict_all(self) -> dict:
+        """Entrena modelos (quali + carrera), predice quali y luego predice carrera usando grilla.
+        Devuelve rutas de archivos generados."""
+        print("🧩 Opción 6: Entrenar y predecir quali + carrera")
+        artifacts = {}
+        # 1) Entrenar quali (histórico recientes)
+        ok_q = self.train_quali_from_fp3(year=2025)
+        if not ok_q:
+            print("⚠️ Entrenamiento de quali fallido o incompleto")
+        artifacts["quali_model"] = "app/models_cache/quali_recent_model.pkl"
+
+        # 2) Entrenar carrera (pipeline principal si hace falta)
+        self.run()
+        artifacts["race_models"] = "app/models_cache/"  # carpeta
+
+        # 3) Predecir quali de la próxima
+        qpred = self.predict_quali_next_race()
+        artifacts["quali_predictions"] = "app/models_cache/quali_predictions_latest.csv"
+
+        # 4) Predecir carrera usando grilla (real si hay; si no, predicha)
+        rpred = self.predict_race_from_quali_grid(beta=None)
+        artifacts["race_predictions"] = "app/models_cache/race_predictions_latest.csv"
+        return artifacts
