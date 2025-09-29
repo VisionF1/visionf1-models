@@ -414,52 +414,6 @@ class AdvancedFeatureEngineer:
         self._log("✅ Features climáticas creadas (robusto).")
         return df
 
-
-        def _driver_weather_stats(g: pd.DataFrame) -> pd.DataFrame:
-            g = g.copy()
-
-            # SIN shift: se asume que la carrera objetivo no está incluida en el train
-            pts = g["points"]
-
-            # Máscaras 0/1
-            rain = g["session_rainfall"]
-            dry = 1 - rain
-
-            # Enmascarar puntos por condición
-            pts_rain = pts.where(rain == 1)
-            pts_dry = pts.where(dry == 1)
-
-            # Promedios acumulados por condición (expanding)
-            # Nota: expanding ignora NaN; cuando no hay historial, queda NaN -> rellenamos a 0.0
-            g["driver_avg_points_in_rain"] = (
-                pts_rain.expanding(min_periods=1).mean().fillna(0.0)
-            )
-            g["driver_avg_points_in_dry"] = (
-                pts_dry.expanding(min_periods=1).mean().fillna(0.0)
-            )
-
-            # Delta lluvia - seco
-            g["driver_rain_dry_delta"] = (
-                g["driver_avg_points_in_rain"] - g["driver_avg_points_in_dry"]
-            )
-
-            return g
-
-        df = df.groupby("driver", group_keys=False).apply(_driver_weather_stats)
-
-        # Limpieza columnas auxiliares
-        if "_row_ix_wthr" in df.columns:
-            df.drop(columns=["_row_ix_wthr"], inplace=True, errors="ignore")
-
-        self.created_features += [
-            "driver_avg_points_in_rain",
-            "driver_avg_points_in_dry",
-            "driver_rain_dry_delta",
-        ]
-        self._log("✅ Features climáticas creadas.")
-        return df
-
-
     # -------------------- utilidades de inspección --------------------
 
     def list_created_features(self) -> List[str]:
