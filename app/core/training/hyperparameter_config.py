@@ -1,6 +1,6 @@
-from app.core.predictors.random_forest import RandomForestPredictor
-from app.core.predictors.xgboost_model import XGBoostPredictor
-from app.core.predictors.gradient_boosting import GradientBoostingPredictor
+from app.core.predictors.models.random_forest import RandomForestPredictor
+from app.core.predictors.models.xgboost_model import XGBoostPredictor
+from app.core.predictors.models.gradient_boosting import GradientBoostingPredictor
 
 def initialize_models_with_hyperparams():
     return {
