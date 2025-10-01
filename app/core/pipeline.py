@@ -7,7 +7,7 @@ from app.data.preprocessors.data_cleaner import clean_data
 from app.core.training.enhanced_data_preparer import EnhancedDataPreparer
 from app.core.training.model_trainer import ModelTrainer
 from app.core.utils.race_range_builder import RaceRangeBuilder
-from app.core.predictors.simple_position_predictor.position_predictor import SimplePositionPredictor
+from app.core.predictors.simple_position_predictor.predictor import SimplePositionPredictor
 from app.core.predictors.fp3_quali_predictor import Fp3QualiPredictor
 from app.core.predictors.quali_recent_predictor import RecentQualiPredictor
 from app.config import PREDICTION_CONFIG, RACE_PREDICTION

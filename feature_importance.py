@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from app.core.predictors.simple_position_predictor.position_predictor import SimplePositionPredictor
+from app.core.predictors.simple_position_predictor.predictor import SimplePositionPredictor
 
 def main():
     predictor = SimplePositionPredictor(quiet=False)
