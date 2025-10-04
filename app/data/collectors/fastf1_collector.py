@@ -27,12 +27,14 @@ class FastF1Collector:
     def collect_data(self, force_refresh: bool | None = None):
         """Recolecta datos usando cache inteligente.
         Si force_refresh es True, ignora y sustituye el cache por datos frescos."""
-        print(f"🔍 Verificando cache para {len(self.race_range)} carreras...")
         if force_refresh is None:
             force_refresh = self.force_refresh
 
         fresh_data_collected = 0
+        fresh_data_collected_names = {}
         cached_data_used = 0
+        cached_data_names = {}
+
         
         for race in self.race_range:
             cache_file = self._get_cache_filename(race)
@@ -43,29 +45,44 @@ class FastF1Collector:
             if cached_data is not None and not cached_data.empty:
                 self.data.append(cached_data)
                 cached_data_used += 1
-                print(f"📦 Cache usado para carrera {race['race_name']} ({race['year']})")
+                if not race['race_name'] in cached_data_names:
+                    cached_data_names[race['race_name']] = []
+
+                cached_data_names[race['race_name']].append(race['year'])
             else:
                 # Si se fuerza refresco, eliminar cache previo si existiera
                 if force_refresh and os.path.exists(cache_file):
                     try:
                         os.remove(cache_file)
-                        print(f"🗑️  Cache eliminado para refrescar: {os.path.basename(cache_file)}")
+                        print(f"Cache eliminado para refrescar: {os.path.basename(cache_file)}")
                     except Exception as e:
-                        print(f"⚠️ No se pudo eliminar cache previo: {e}")
+                        print(f"No se pudo eliminar cache previo: {e}")
                 # Cache no existe o está expirado, descargar datos frescos
                 fresh_data = self._download_fresh_data(race)
                 if fresh_data is not None and not fresh_data.empty:
                     self.data.append(fresh_data)
                     self._save_to_cache(fresh_data, cache_file, race)
                     fresh_data_collected += 1
-                    print(f"🌐 Datos frescos descargados para carrera {race['race_name']} ({race['year']})")
+                    if not race['race_name'] in fresh_data_collected_names:
+                        fresh_data_collected_names[race['race_name']] = []
+                    fresh_data_collected_names[race['race_name']].append(race['year'])
                 else:
-                    print(f"⚠️  No se pudieron obtener datos para carrera {race['race_name']} ({race['year']})")
-        
-        print(f"\n📊 Resumen de recolección:")
-        print(f"   📦 Datos desde cache: {cached_data_used}")
-        print(f"   🌐 Datos descargados: {fresh_data_collected}")
-        print(f"   📁 Total carreras procesadas: {len(self.data)}")
+                    print(f"No se pudieron obtener datos para carrera {race['race_name']} ({race['year']})")
+
+        print(f"\nResumen de recolección:")
+        print(f"   Datos desde cache: {cached_data_used}")
+        if cached_data_names:
+            print("   Datos obtenidos desde cache:")
+            for race_name, years in cached_data_names.items():
+                print(f"      - {race_name}: {', '.join(map(str, years))}")
+
+        print(f"   Datos descargados: {fresh_data_collected}")
+        if fresh_data_collected_names:
+            print("   Datos descargados para:")
+            for race_name, years in fresh_data_collected_names.items():
+                print(f"      - {race_name}: {', '.join(map(str, years))}")
+
+        print(f"   Total carreras procesadas: {len(self.data)}")
 
     def _get_cache_filename(self, race):
         """Genera nombre de archivo de cache único por carrera"""
@@ -82,20 +99,16 @@ class FastF1Collector:
             return None
         
         try:
-            # Verificar si el archivo es reciente
             file_age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(cache_file))
             
-            # Cargar datos del cache
             with open(cache_file, 'rb') as f:
                 cache_data = pickle.load(f)
             
-            # Verificar que los datos sean válidos
             if isinstance(cache_data, dict) and 'data' in cache_data:
                 return cache_data['data']
             
         except Exception as e:
-            print(f"❌ Error leyendo cache {os.path.basename(cache_file)}: {e}")
-            # Si hay error, eliminar archivo corrupto
+            print(f"Error leyendo cache {os.path.basename(cache_file)}: {e}")
             try:
                 os.remove(cache_file)
             except:
@@ -120,10 +133,10 @@ class FastF1Collector:
             with open(cache_file, 'wb') as f:
                 pickle.dump(cache_data, f)
             
-            print(f"💾 Datos completos guardados en cache: {os.path.basename(cache_file)}")
+            print(f"Datos completos guardados en cache: {os.path.basename(cache_file)}")
             
         except Exception as e:
-            print(f"❌ Error guardando cache: {e}")
+            print(f"Error guardando cache: {e}")
 
     def _download_fresh_data(self, race):
         """Descarga datos frescos de FastF1 - TODAS LAS SESIONES"""
@@ -132,20 +145,18 @@ class FastF1Collector:
             race_name = race.get('race_name', f'carrera {race_identifier}')
             year = race['year']
             
-            print(f"🌐 Descargando datos completos de {race_name} del año {year}...")
+            print(f"Descargando datos completos de {race_name} del año {year}...")
             
-            # 🔥 RECOLECTAR DATOS DE TODAS LAS SESIONES
             weekend_data = self._extract_complete_weekend_data(year, race_identifier, race_name)
             
             if weekend_data is not None and not weekend_data.empty:
-                print(f"✅ Datos completos descargados ({len(weekend_data)} pilotos con práctica/quali/carrera)")
                 return weekend_data
             else:
-                print(f"⚠️  No se encontraron datos válidos del fin de semana")
+                print(f"No se encontraron datos válidos del fin de semana de {race_name} ({year})")
                 return None
                     
         except Exception as e:
-            print(f"❌ Error descargando {race_name}: {e}")
+            print(f"Error descargando {race_name}: {e}")
             return None
 
     def _extract_complete_weekend_data(self, year, race_identifier, race_name):
@@ -166,12 +177,12 @@ class FastF1Collector:
             
             for session_name, session_code in sessions_config.items():
                 try:
-                    print(f"   📊 Extrayendo datos de {session_name}...")
+                    print(f"  Extrayendo datos de {session_name}...")
                     session = fastf1.get_session(year, race_identifier, session_code)
                     
                     # Verificar si la sesión ya ocurrió
                     if hasattr(session, 'date') and session.date > pd.Timestamp.now():
-                        print(f"   ⏸️  {session_name} aún no ha ocurrido")
+                        print(f"   {session_name} aún no ha ocurrido")
                         continue
                     
                     session.load()
@@ -194,19 +205,19 @@ class FastF1Collector:
                     
                     if session_data:
                         weekend_data[session_name] = session_data
-                        print(f"   ✅ {session_name}: {len(session_data)} pilotos")
+                        print(f"   {session_name}: {len(session_data)} pilotos")
                     else:
-                        print(f"   ⚠️  {session_name}: No hay datos válidos")
+                        print(f"   {session_name}: No hay datos válidos")
                         
                 except Exception as e:
-                    print(f"   ❌ Error en {session_name}: {e}")
+                    print(f"   Error en {session_name}: {e}")
                     continue
             
             # Combinar datos de todas las sesiones por piloto
             return self._combine_weekend_data(weekend_data, race_name, year)
             
         except Exception as e:
-            print(f"❌ Error extrayendo datos del fin de semana: {e}")
+            print(f"Error extrayendo datos del fin de semana: {e}")
             return None
 
     def _extract_qualifying_data(self, session):
@@ -214,17 +225,14 @@ class FastF1Collector:
         try:
             qualifying_data = {}
             
-            # 🔥 Asegurar carga completa de la sesión (resultados + laps + clima)
             try:
-                print(f"   🔄 Loading qualifying session data...")
+                print(f"   Loading qualifying session data...")
                 session.load(weather=True)
             except Exception as e:
-                print(f"   ⚠️  No se pudo cargar completamente la sesión de quali: {e}")
+                print(f"   No se pudo cargar completamente la sesión de quali: {e}")
             
-            # Obtener condiciones meteorológicas promedio para la sesión
             weather_conditions = self._extract_session_weather_data(session)
             
-            # Obtener resultados de clasificación
             if hasattr(session, 'results') and not session.results.empty:
                 for _, driver_result in session.results.iterrows():
                     driver = driver_result['Abbreviation']
@@ -281,10 +289,10 @@ class FastF1Collector:
         try:
             out = {}
             try:
-                print("   🔄 Loading sprint qualifying session data...")
+                print("   Loading sprint qualifying session data...")
                 session.load(weather=True)
             except Exception as e:
-                print(f"   ⚠️  No se pudo cargar completamente SQ: {e}")
+                print(f"   No se pudo cargar completamente SQ: {e}")
 
             weather = self._extract_session_weather_data(session)
 
@@ -332,7 +340,6 @@ class FastF1Collector:
         try:
             out = {}
             if not hasattr(session, 'weather_data') or session.weather_data is None:
-                print("   🔄 Loading sprint session data...")
                 session.load(weather=True)
             weather = self._extract_session_weather_data(session)
 
@@ -367,7 +374,6 @@ class FastF1Collector:
             
             # Cargar datos meteorológicos si no están cargados
             if not hasattr(session, 'weather_data') or session.weather_data is None:
-                print(f"   🔄 Loading race weather data...")
                 session.load(weather=True)
             
             # Obtener condiciones meteorológicas promedio para la sesión
@@ -399,7 +405,6 @@ class FastF1Collector:
                         best_lap = valid_laps.loc[valid_laps['LapTime'].idxmin()]
                         clean_air_pace = self.calculate_clean_air_pace(valid_laps)
                         
-                        # 🔥 NUEVAS FEATURES DE RENDIMIENTO Y NEUMÁTICOS
                         tyre_data = self._extract_tyre_strategy_data(valid_laps)
                         speed_data = self._extract_speed_profile_data(best_lap, valid_laps)
                         performance_data = self._calculate_performance_metrics(valid_laps, driver)
@@ -429,7 +434,6 @@ class FastF1Collector:
             practice_data = {}
             
             if not hasattr(session, 'laps') or session.laps is None:
-                print(f"   🔄 Loading {session_name} session data...")
                 session.load(weather=True)  # Cargar datos meteorológicos
             
             # Obtener condiciones meteorológicas promedio para la sesión
@@ -444,7 +448,6 @@ class FastF1Collector:
                         best_lap = valid_laps.loc[valid_laps['LapTime'].idxmin()]
                         avg_lap = valid_laps['LapTime'].mean()
                         
-                        # 🔥 NUEVAS FEATURES PARA PRÁCTICA LIBRE
                         speed_data = self._extract_speed_profile_data(best_lap, valid_laps)
                         consistency_data = self._calculate_consistency_metrics(valid_laps)
                         
@@ -649,7 +652,6 @@ class FastF1Collector:
                     'session_track_temp_max': float(weather_df['TrackTemp'].max()) if 'TrackTemp' in weather_df.columns else None,
                 }
                 
-                print(f"   🌤️  Datos meteorológicos: Aire {weather_data.get('session_air_temp', 'N/A')}°C, Pista {weather_data.get('session_track_temp', 'N/A')}°C, Humedad {weather_data.get('session_humidity', 'N/A')}%, Lluvia {'Sí' if weather_data.get('session_rainfall', False) else 'No'}")
                 
             else:
                 # Valores por defecto si no hay datos meteorológicos
@@ -666,12 +668,12 @@ class FastF1Collector:
                     'session_track_temp_min': None,
                     'session_track_temp_max': None,
                 }
-                print(f"   ⚠️  No hay datos meteorológicos disponibles para esta sesión")
+                print(f"    No hay datos meteorológicos disponibles para esta sesión")
             
             return weather_data
             
         except Exception as e:
-            print(f"   ❌ Error extrayendo datos meteorológicos: {e}")
+            print(f"   Error extrayendo datos meteorológicos: {e}")
             # Retornar estructura por defecto en caso de error
             return {
                 'session_air_temp': None,
@@ -722,7 +724,7 @@ class FastF1Collector:
             return tyre_data
             
         except Exception as e:
-            print(f"   ⚠️  Error extrayendo datos de neumáticos: {e}")
+            print(f"   Error extrayendo datos de neumáticos: {e}")
             return {
                 'primary_compound': None,
                 'avg_tyre_life': None,
@@ -758,7 +760,7 @@ class FastF1Collector:
             return speed_data
             
         except Exception as e:
-            print(f"   ⚠️  Error extrayendo datos de velocidad: {e}")
+            print(f"   Error extrayendo datos de velocidad: {e}")
             return {
                 'best_lap_speed_i1': None, 'best_lap_speed_i2': None,
                 'best_lap_speed_fl': None, 'best_lap_speed_st': None,
@@ -807,7 +809,7 @@ class FastF1Collector:
             return performance_data
             
         except Exception as e:
-            print(f"   ⚠️  Error calculando métricas de rendimiento: {e}")
+            print(f"   Error calculando métricas de rendimiento: {e}")
             return {
                 'lap_time_std': None,
                 'lap_time_consistency': None,
@@ -843,7 +845,7 @@ class FastF1Collector:
             return consistency_data
             
         except Exception as e:
-            print(f"   ⚠️  Error calculando consistencia: {e}")
+            print(f"   Error calculando consistencia: {e}")
             return {
                 'time_std': None,
                 'time_range': None,
@@ -892,26 +894,26 @@ class FastF1Collector:
                     
                     os.remove(file_path)
                     files_removed += 1
-                    print(f"🗑️  Cache eliminado: {filename}")
+                    print(f"Cache eliminado: {filename}")
                     
                 except Exception as e:
-                    print(f"❌ Error eliminando {filename}: {e}")
-        
-        print(f"🧹 Cache limpiado: {files_removed} archivos eliminados")
-    
+                    print(f"Error eliminando {filename}: {e}")
+
+        print(f"Cache limpiado: {files_removed} archivos eliminados")
+
     def cache_info(self):
         """Muestra información sobre el cache"""
         if not os.path.exists(self.cache_dir):
-            print("📁 No existe directorio de cache")
+            print("No existe directorio de cache")
             return
         
         cache_files = [f for f in os.listdir(self.cache_dir) if f.endswith('.pkl')]
         
         if not cache_files:
-            print("📁 Cache vacío")
+            print("Cache vacío")
             return
-        
-        print(f"📁 Cache info: {len(cache_files)} archivos")
+
+        print(f"Cache info: {len(cache_files)} archivos")
         total_size = 0
         
         for filename in cache_files:
@@ -921,9 +923,9 @@ class FastF1Collector:
                 age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file_path))
                 total_size += size
                 
-                print(f"   📄 {filename}: {size/1024:.1f}KB, {age.days} días")
+                print(f"  {filename}: {size/1024:.1f}KB, {age.days} días")
                 
             except Exception as e:
-                print(f"   ❌ Error leyendo {filename}: {e}")
-        
-        print(f"💾 Tamaño total del cache: {total_size/1024/1024:.2f}MB")
+                print(f"   Error leyendo {filename}: {e}")
+
+        print(f"Tamaño total del cache: {total_size/1024/1024:.2f}MB")

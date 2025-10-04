@@ -98,13 +98,11 @@ class Pipeline:
 
     def collect_data(self):
         """Recolecta datos de FastF1"""
-        print("📡 Recolectando datos de FastF1...")
         self.collector.collect_data()
         self.data = self.collector.get_data()
 
     def preprocess_data(self):
         """Limpia y prepara los datos"""
-        print("🧹 Limpiando datos...")
         self.data = clean_data(self.data)
 
     def predict_next_race_positions(self):

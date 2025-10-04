@@ -11,11 +11,11 @@ class RaceRangeBuilder:
         max_races_per_year = config.get("max_races_per_year", 24)
         
         for year in years:
-            print(f"🔍 Detectando carreras para {year}...")
+            print(f"Detectando carreras para {year}...")
             races = self._get_races_for_year(year, max_races_per_year)
             race_range.extend(races)
         
-        print(f"📊 Total carreras: {len(race_range)}")
+        print(f"Total carreras: {len(race_range)}")
         return race_range
     
     def _get_races_for_year(self, year, max_races):
@@ -23,18 +23,18 @@ class RaceRangeBuilder:
         try:
             schedule = fastf1.get_event_schedule(year)
             available_races = len(schedule)
-            print(f"   📅 {available_races} carreras en calendario de {year}")
+            print(f"  - {available_races} carreras en calendario de {year}")
             
             # Para años futuros, verificar cuáles han ocurrido
             actual_races = self._count_completed_races(year, available_races, max_races)
             races_to_get = min(actual_races, max_races)
-            
-            print(f"   ✅ {races_to_get} carreras completadas")
-            
+
+            print(f"  - {races_to_get} carreras completadas")
+
             return self._build_race_list(year, races_to_get, schedule)
             
         except Exception as e:
-            print(f"❌ Error obteniendo calendario de {year}: {e}")
+            print(f"Error obteniendo calendario de {year}: {e}")
             return self._fallback_races(year)
     
     def _count_completed_races(self, year, available_races, max_races):
@@ -42,7 +42,7 @@ class RaceRangeBuilder:
         if year < 2025:
             return available_races
         
-        print(f"   🔍 Verificando carreras completadas en {year}...")
+        print(f"   Verificando carreras completadas en {year}...")
         completed = 0
         
         for round_num in range(1, min(available_races + 1, max_races + 1)):
@@ -51,10 +51,10 @@ class RaceRangeBuilder:
                 if session.date < pd.Timestamp.now():
                     completed += 1
                 else:
-                    print(f"   ⏸️  Carrera {round_num} aún no ocurrió")
+                    print(f"   Carrera {round_num} aún no ocurrió")
                     break
             except Exception:
-                print(f"   ⏸️  No hay datos para carrera {round_num}")
+                print(f"   No hay datos para carrera {round_num}")
                 break
         
         return completed
@@ -74,7 +74,7 @@ class RaceRangeBuilder:
                     'round_number': round_num
                 })
             except Exception as e:
-                print(f"   ⚠️  Error con carrera {round_num}: {e}")
+                print(f"   Error con carrera {round_num}: {e}")
                 races.append({
                     'year': year,
                     'race_name': f"Race_{round_num}",
@@ -86,7 +86,7 @@ class RaceRangeBuilder:
     def _fallback_races(self, year):
         """Fallback para cuando falla la obtención del calendario"""
         fallback_count = 24 if year <= 2024 else 13
-        print(f"   🔄 Usando fallback: {fallback_count} carreras")
+        print(f"   Usando fallback: {fallback_count} carreras")
         
         return [{
             'year': year,
