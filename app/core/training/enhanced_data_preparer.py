@@ -3,12 +3,76 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
+from sklearn.base import BaseEstimator, TransformerMixin
 from pathlib import Path
 import pickle
 
 from app.core.features.advanced_feature_engineer import AdvancedFeatureEngineer
 
 warnings.filterwarnings('ignore')
+
+
+class InferencePreprocessor(BaseEstimator, TransformerMixin):
+    """
+    Preprocesador sklearn-compatible y pickeable que usa EnhancedDataPreparer
+    para generar **features pre-race** a partir de columnas RAW.
+    - fit: no aprende nada (los encoders ya fueron persistidos durante el train)
+    - transform: aplica `prepare_enhanced_features(inference=True)` y devuelve X numérico
+    """
+    def __init__(self, quiet: bool = False, de_emphasize_team: bool = True, team_deemphasis_factor: float = 0.4):
+        self.quiet = quiet
+        self.de_emphasize_team = de_emphasize_team
+        self.team_deemphasis_factor = max(0.0, min(1.0, team_deemphasis_factor))
+        self._inner: Optional[EnhancedDataPreparer] = None  # se inicializa perezoso
+        self.feature_names_out_: Optional[List[str]] = None
+
+    def _get_inner(self) -> "EnhancedDataPreparer":
+        if self._inner is None:
+            self._inner = EnhancedDataPreparer(
+                quiet=self.quiet,
+                de_emphasize_team=self.de_emphasize_team,
+                team_deemphasis_factor=self.team_deemphasis_factor,
+            )
+        return self._inner
+
+    def fit(self, X, y=None):
+        # No necesitamos ajustar nada para inferencia (los encoders están guardados)
+        return self
+
+    def transform(self, X):
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+        prep = self._get_inner()
+        Xnum, _, _, feature_names = prep.prepare_enhanced_features(X, inference=True)
+
+        # -------- ALINEACIÓN CRÍTICA POR feature_names.pkl --------
+        try:
+            fn_path = Path("app/models_cache/feature_names.pkl")
+            if fn_path.exists():
+                with fn_path.open("rb") as f:
+                    trained = pickle.load(f)
+                if isinstance(trained, (list, tuple)):
+                    trained = list(trained)
+                    # crear faltantes y reordenar
+                    for c in trained:
+                        if c not in Xnum.columns:
+                            Xnum[c] = 0
+                    Xnum = Xnum.reindex(columns=trained, fill_value=0)
+                    if not self.quiet:
+                        print(f"✅ Alineado al orden de entrenamiento ({len(trained)} features)")
+            else:
+                if not self.quiet:
+                    print("⚠️  No encontré feature_names.pkl; se usa el orden generado por FE.")
+        except Exception as e:
+            if not self.quiet:
+                print(f"⚠️  No se pudo alinear por feature_names.pkl: {e}")
+
+        self.feature_names_out_ = list(Xnum.columns)
+        return Xnum
+
+    # compat para sklearn >=1.0 (introspección)
+    def get_feature_names_out(self, input_features=None):
+        return np.array(self.feature_names_out_ or [], dtype=object)
 
 
 class EnhancedDataPreparer:
@@ -19,6 +83,9 @@ class EnhancedDataPreparer:
         self.feature_names: List[str] = []
         self.de_emphasize_team = de_emphasize_team
         self.team_deemphasis_factor = max(0.0, min(1.0, team_deemphasis_factor))
+
+        # Exponer un preprocesador para pipeline RAW (lo construimos bajo demanda)
+        self.preprocessor: Optional[InferencePreprocessor] = None
 
     # ---------- utils ----------
     def _log(self, msg: str):
@@ -44,7 +111,6 @@ class EnhancedDataPreparer:
         vals = series.astype(str).fillna("")
         classes = list(le.classes_)
         mapping = {c: i for i, c in enumerate(classes)}
-        # si unknown_index está fuera de rango, forzamos 0
         if not (0 <= unknown_index < len(classes)):
             unknown_index = 0
         return np.array([mapping.get(v, unknown_index) for v in vals], dtype=int)
@@ -59,8 +125,13 @@ class EnhancedDataPreparer:
         if inference:
             le = self._load_encoder(col)
             if le is None:
-                # fallback: encoder ad-hoc sólo para esta predicción (no se guarda)
-                le = LabelEncoder().fit(df[col])
+                # >>>>>>>>>>> LOG CRÍTICO: estamos cayendo a fallback
+                if not self.quiet:
+                    print(f"⚠️  Fallback encoder para '{col}': NO se encontró app/models_cache/{col}_encoder.pkl")
+                le = LabelEncoder().fit(df[col])  # solo para no romper; mapea “a su manera”
+            else:
+                if not self.quiet:
+                    print(f"📦 Encoder '{col}' cargado (clases={len(le.classes_)})")
             df[f"{col}_encoded"] = self._transform_with_encoder(le, df[col], unknown_index=0)
         else:
             # ENTRENAMIENTO: ajustamos y guardamos
@@ -68,21 +139,11 @@ class EnhancedDataPreparer:
             if le is None:
                 le = LabelEncoder().fit(df[col])
             else:
-                # extender clases de forma estable SIN reordenar indices existentes:
-                # LabelEncoder ordena alfabéticamente, así que NO vamos a "extender"
-                # para no desplazar índices. Simplemente re-fit con todas las clases
-                # actuales del df + las ya existentes, pero mantenemos el mismo orden.
-                # Para lograrlo, congelamos el orden previo y sólo añadimos nuevas
-                # al final.
                 prev = list(le.classes_)
                 new_vals = sorted(set(df[col].unique()) - set(prev))
                 if new_vals:
-                    all_classes = np.array(prev + new_vals, dtype=object)
-                    # Creamos un "pseudo" encoder con ese orden fijo:
                     le = LabelEncoder()
-                    le.classes_ = all_classes
-
-            # transform y guardado
+                    le.classes_ = np.array(prev + new_vals, dtype=object)
             df[f"{col}_encoded"] = self._transform_with_encoder(le, df[col], unknown_index=0)
             self._save_encoder(col, le)
 
@@ -170,139 +231,28 @@ class EnhancedDataPreparer:
         y_test = y.iloc[test_idx].reset_index(drop=True)
         return X_train, X_test, y_train, y_test, feature_names
 
-
-
-
-    # ---------- FP3 → Quali dataset (2025) ----------
-    def build_fp3_quali_dataset(self, year: int | list[int] = 2025) -> pd.DataFrame:
-        """Construye dataset FP3→Quali para uno o varios años y lo guarda en cache.
-
-        Columnas clave del output:
-        - year, round, race_name, weekend_key
-        - driver, team
-        - fp3_best_time, fp3_laps_count
-        - quali_best_time
-        - ratio_fp3_quali, delta_fp3_quali_s
-        - event_delta_median_s (proxy evolución)
+    # ---------- Exponer preprocesador RAW para el pipeline ---------
+    def get_inference_preprocessor(self) -> InferencePreprocessor:
+        """Devuelve un preprocesador sklearn pickeable que transforma RAW → features finales.
+        Se usa por `pipeline.export_full_pipeline` para que el .pkl espere columnas crudas.
         """
-        from app.core.utils.race_range_builder import RaceRangeBuilder
-        from app.data.collectors.fastf1_collector import FastF1Collector
-        from app.data.preprocessors.data_cleaner import clean_data
-        import fastf1
-
-        # 1) Construir rango de carreras para los años solicitados
-        years = year
-        if isinstance(years, (int, float, str)):
-            try:
-                years = [int(years)]
-            except Exception:
-                years = [2025]
-        years = [int(y) for y in years]
-        cfg = {"years": years, "max_races_per_year": 30}
-        rr = RaceRangeBuilder().build_race_range(cfg)
-        collector = FastF1Collector(rr)
-        collector.collect_data()
-        df = collector.get_data()
-        if df is None or df.empty:
-            return pd.DataFrame()
-
-        # 2) Limpieza básica (no eliminar filas por columnas genéricas)
-        # Evitar usar clean_data aquí porque elimina filas por 'best_lap_time' o 'clean_air_pace'
-        # que no aplican a quali; nos quedamos con deduplicación ligera más abajo
-        df = df.copy()
-
-        # 3) Round mapping desde schedule (por (year, race_name))
-        name_to_round = {}
-        try:
-            for y in years:
-                try:
-                    sched = fastf1.get_event_schedule(int(y))
-                    for _, r in sched.iterrows():
-                        rn = int(r.get("RoundNumber")) if pd.notna(r.get("RoundNumber")) else None
-                        evn = str(r.get("EventName"))
-                        if rn is not None and evn:
-                            name_to_round[(int(y), evn)] = rn
-                except Exception:
-                    continue
-        except Exception:
-            name_to_round = {}
-
-        # 4) Selección/derivación de columnas
-        out = df.copy()
-        if "year" in out.columns:
-            out = out[out["year"].isin(years)]
-        # columnas mínimas
-        for c in ["driver", "team", "race_name", "year"]:
-            if c not in out.columns:
-                out[c] = None
-        # round + weekend_key
-        def _map_round(row):
-            try:
-                return name_to_round.get((int(row["year"]), str(row["race_name"])) , np.nan)
-            except Exception:
-                return np.nan
-        out["round"] = out.apply(_map_round, axis=1)
-        out["weekend_key"] = out.apply(lambda r: f"{int(r['year'])}_{str(r['race_name'])}", axis=1)
-        # fp3/quali best
-        out["fp3_best_time"] = pd.to_numeric(out.get("fp3_best_time", np.nan), errors="coerce")
-        # Derivar quali_best_time si falta
-        if "quali_best_time" not in out.columns or out["quali_best_time"].isna().all():
-            qcols = []
-            for c in ("q1_time", "q2_time", "q3_time", "quali_best_lap_from_laps"):
-                if c in out.columns:
-                    qcols.append(pd.to_numeric(out[c], errors="coerce"))
-            if qcols:
-                out["quali_best_time"] = pd.concat(qcols, axis=1).min(axis=1)
-        out["quali_best_time"] = pd.to_numeric(out.get("quali_best_time", np.nan), errors="coerce")
-
-        # 5) Filtrar válidos SOLO por quali (permitir fp3 faltante)
-        out = out.dropna(subset=["quali_best_time"]).copy()
-        out = out[(out["quali_best_time"] > 0)]
-        if out.empty:
-            return pd.DataFrame()
-
-        # 6) Derivadas (ratio/delta solo si hay FP3)
-        out["ratio_fp3_quali"] = np.nan
-        out["delta_fp3_quali_s"] = np.nan
-        mask_fp3 = pd.to_numeric(out["fp3_best_time"], errors="coerce").notna() & (out["fp3_best_time"] > 0)
-        out.loc[mask_fp3, "ratio_fp3_quali"] = out.loc[mask_fp3, "quali_best_time"] / out.loc[mask_fp3, "fp3_best_time"]
-        out.loc[mask_fp3, "delta_fp3_quali_s"] = out.loc[mask_fp3, "quali_best_time"] - out.loc[mask_fp3, "fp3_best_time"]
-        # winsor simple
-        rl, rh = 0.05, 0.95
-        if out["ratio_fp3_quali"].notna().any():
-            out["ratio_fp3_quali_w"] = out["ratio_fp3_quali"].clip(
-                lower=out["ratio_fp3_quali"].quantile(rl), upper=out["ratio_fp3_quali"].quantile(rh)
+        if self.preprocessor is None:
+            self.preprocessor = InferencePreprocessor(
+                quiet=self.quiet,
+                de_emphasize_team=self.de_emphasize_team,
+                team_deemphasis_factor=self.team_deemphasis_factor,
             )
-        else:
-            out["ratio_fp3_quali_w"] = np.nan
-        if out["delta_fp3_quali_s"].notna().any():
-            out["delta_fp3_quali_w_s"] = out["delta_fp3_quali_s"].clip(
-                lower=out["delta_fp3_quali_s"].quantile(rl), upper=out["delta_fp3_quali_s"].quantile(rh)
-            )
-        else:
-            out["delta_fp3_quali_w_s"] = np.nan
-        # proxy por evento
-        ev = out.groupby("weekend_key")["delta_fp3_quali_w_s"].median().rename("event_delta_median_s")
-        out = out.merge(ev, on="weekend_key", how="left")
+        return self.preprocessor
 
-        # 7) Guardar CSV
-        cache_dir = Path("app/models_cache")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        csv_path = cache_dir / "quali_dataset_latest.csv"
-        out_cols = [
-            "driver", "team", "race_name", "year", "round", "weekend_key",
-            "fp3_best_time", "quali_best_time", "ratio_fp3_quali", "delta_fp3_quali_s",
-            "fp3_laps_count", "event_delta_median_s",
-            # Sprint-related
-            "sq_best_time", "sq_position", "sprint_position", "sprint_best_lap_time", "sprint_points"
+    def list_expected_raw_inputs(self) -> List[str]:
+        """Lista mínima de columnas RAW esperadas para inferencia.
+        (El feature engineering añade derivadas y los encoders mapean categóricas).
+        """
+        # Núcleo mínimo
+        cols = [
+            'driver', 'team', 'race_name', 'year',
+            'session_air_temp', 'session_track_temp', 'session_humidity', 'session_rainfall',
+            'circuit_type'
         ]
-        for c in ["fp3_laps_count"]:
-            if c not in out.columns:
-                out[c] = np.nan
-        # Ensure sprint columns exist
-        for c in ["sq_best_time", "sq_position", "sprint_position", "sprint_best_lap_time", "sprint_points"]:
-            if c not in out.columns:
-                out[c] = np.nan
-        out[out_cols].to_csv(csv_path, index=False)
-        print(f"💾 Dataset FP3→Quali guardado: {csv_path}")
-        return out[out_cols]
+        # La ingeniería avanzada puede usar históricos internos; no es necesario aportarlos aquí
+        return cols
