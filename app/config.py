@@ -1,87 +1,193 @@
 # Configuración del rango de carreras para el entrenamiento - MÚLTIPLES AÑOS
 RACE_RANGE = {
-    "years": [2024, 2025],  # Años a descargar
+    "years": [2022, 2023, 2024, 2025],  # Años a descargar
     "max_races_per_year": 24,  # Máximo de carreras por año (F1 tiene ~24 carreras)
     "include_current_year": True,  # Incluir año actual aunque esté incompleto
     "auto_detect_available": True,  # Detectar automáticamente carreras disponibles
     "stop_on_future_races": True   # Parar cuando encuentre carreras futuras
 }
 
+
+
+
+
+
+
+
+"""
+=== Nombres de carreras detectados ===
+- Abu Dhabi Grand Prix
+- Australian Grand Prix
+- Austrian Grand Prix
+- Azerbaijan Grand Prix
+- Bahrain Grand Prix
+- Belgian Grand Prix
+- British Grand Prix
+- Canadian Grand Prix
+- Chinese Grand Prix
+- Dutch Grand Prix
+- Emilia Romagna Grand Prix
+- French Grand Prix
+- Hungarian Grand Prix
+- Italian Grand Prix
+- Japanese Grand Prix
+- Las Vegas Grand Prix
+- Mexico City Grand Prix
+- Miami Grand Prix
+- Monaco Grand Prix
+- Qatar Grand Prix
+- Saudi Arabian Grand Prix
+- Singapore Grand Prix
+- Spanish Grand Prix
+- São Paulo Grand Prix
+- United States Grand Prix
+
+
+"""
+
+
+
+
 # Configuración para predicción de próxima carrera
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "Hungarian Grand Prix", 
-        "circuit_name": "Hungaroring",
-        "race_number": 13  # Número de carrera en la temporada 2025
+        "race_name": "Singapore Grand Prix", 
+        "circuit_name": "Marina Bay Street Circuit",
+        "race_number": 18  # Número de carrera en la temporada 2025
     },
-    "use_historical_data": False
+    "use_historical_data": True,
+    
+    # 🌤️ CONFIGURACIÓN METEOROLÓGICA PARA PREDICCIONES
+    "weather_scenarios": {
+        
+        # Escenario seco - condiciones ideales
+        "dry": {
+            "session_air_temp": 26.0,      # Temperatura ideal
+            "session_track_temp": 35.0,    # Temperatura de pista normal
+            "session_humidity": 45.0,      # Humedad baja
+            "session_rainfall": False,     # Sin lluvia
+            "description": "Condiciones secas e ideales"
+        },
+        
+        # Escenario caluroso - estrés térmico
+        "hot": {
+            "session_air_temp": 35.0,      # Muy caluroso
+            "session_track_temp": 50.0,    # Pista muy caliente
+            "session_humidity": 70.0,      # Humedad alta = más estrés
+            "session_rainfall": False,     # Sin lluvia
+            "description": "Condiciones muy calurosas (estrés térmico)"
+        },
+        
+        # Escenario húmedo - lluvia ligera
+        "wet": {
+            "session_air_temp": 18.0,      # Más fresco por lluvia
+            "session_track_temp": 22.0,    # Pista fría
+            "session_humidity": 85.0,      # Muy húmedo
+            "session_rainfall": True,      # Lluvia confirmada
+            "description": "Condiciones húmedas con lluvia"
+        },
+        
+        # Escenario extremo - tormenta
+        "storm": {
+            "session_air_temp": 15.0,      # Frío
+            "session_track_temp": 18.0,    # Pista muy fría
+            "session_humidity": 95.0,      # Humedad extrema
+            "session_rainfall": True,      # Lluvia intensa
+            "description": "Condiciones extremas - tormenta"
+        },
+        
+        # Escenario frío - condiciones invernales
+        "cold": {
+            "session_air_temp": 12.0,      # Muy frío
+            "session_track_temp": 15.0,    # Pista fría
+            "session_humidity": 60.0,      # Humedad media
+            "session_rainfall": False,     # Seco pero frío
+            "description": "Condiciones muy frías"
+        }
+    },
+    
+    # 🎯 CONFIGURACIÓN DE PREDICCIÓN ACTIVA
+    "active_scenario": "dry",  # Cambiar por: "dry", "hot", "wet", "storm", "cold"
+    "active_scenario_emoji": "☀️"
+    # "dry": "☀️",
+    # "hot": "🔥",
+    # "wet": "🌧️",
+    # "storm": "⛈️",
+    # "cold": "❄️"
+
+
 }
 
-# 🔥 FACTOR DE IMPORTANCIA DE DATOS (SIMPLE)
+# PESOS POR AÑOS - Importancia temporal de los datos
 DATA_IMPORTANCE = {
-    "2025_weight": 0.75,  # 75% importancia a datos de 2025
-    "2024_weight": 0.25,  # 25% importancia a datos de 2024
-    "ml_vs_config": {
-        "ml_weight": 0.25,     # 25% modelo ML (histórico)
-        "config_weight": 0.75  # 75% configuración 2025 (actual)
-    }
+    "2025_weight": 0.50,  # 50% - Datos más recientes (máxima importancia)
+    "2024_weight": 0.30,  # 30% - Año anterior (alta importancia)
+    "2023_weight": 0.15,  # 15% - Hace 2 años (media importancia)
+    "2022_weight": 0.05,  # 5% - Hace 3 años (baja importancia)
 }
 
 # Solo pilotos activos 2025
 DRIVERS_2025 = {
-    # McLaren - DOMINANTE 🏆
-    "NOR": {"team": "McLaren", "tier": 1, "expected_range": (1, 4)},
-    "PIA": {"team": "McLaren", "tier": 1, "expected_range": (1, 6)},
+    # Red Bull
+    "VER": {"team": "Red Bull Racing"},
+    "TSU": {"team": "Red Bull Racing", "team_change": True},
+
+    # Ferrari
+    "LEC": {"team": "Ferrari"},
+    "HAM": {"team": "Ferrari", "team_change": True},
     
-    # Ferrari - TOP 🥈  
-    "LEC": {"team": "Ferrari", "tier": 2, "expected_range": (2, 8)},
-    "HAM": {"team": "Ferrari", "tier": 2, "expected_range": (3, 10), "team_change": True},
+    # McLaren
+    "NOR": {"team": "McLaren"},
+    "PIA": {"team": "McLaren"},
     
-    # Red Bull - TOP 🥈
-    "VER": {"team": "Red Bull Racing", "tier": 2, "expected_range": (1, 6)},
-    "TSU": {"team": "Red Bull Racing", "tier": 2, "expected_range": (8, 15), "team_change": True},
     
-    # Mercedes - COMPETITIVO 🥉
-    "RUS": {"team": "Mercedes", "tier": 2, "expected_range": (4, 10)},
-    "ANT": {"team": "Mercedes", "tier": 2, "expected_range": (10, 16), "rookie": True},
+    # Mercedes
+    "RUS": {"team": "Mercedes"},
+    "ANT": {"team": "Mercedes", "rookie": True},
     
-    # Williams - MEJORÓ 📈
-    "ALB": {"team": "Williams", "tier": 3, "expected_range": (8, 14)},
-    "SAI": {"team": "Williams", "tier": 3, "expected_range": (10, 16), "team_change": True},
+    # Williams
+    "ALB": {"team": "Williams"},
+    "SAI": {"team": "Williams", "team_change": True},
     
-    # Racing Bulls - MIDFIELD 
-    "HAD": {"team": "Racing Bulls", "tier": 3, "expected_range": (12, 18), "rookie": True},
-    "LAW": {"team": "Racing Bulls", "tier": 3, "expected_range": (14, 20), "rookie": True},
+    # Racing Bulls
+    "HAD": {"team": "Racing Bulls", "rookie": True},
+    "LAW": {"team": "Racing Bulls", "rookie": True},
     
-    # Aston Martin - BAJÓ 📉
-    "ALO": {"team": "Aston Martin", "tier": 4, "expected_range": (8, 16)},
-    "STR": {"team": "Aston Martin", "tier": 4, "expected_range": (12, 18)},
+    # Aston Martin
+    "ALO": {"team": "Aston Martin"},
+    "STR": {"team": "Aston Martin"},
     
-    # Haas - MIDFIELD BAJO
-    "OCO": {"team": "Haas", "tier": 4, "expected_range": (10, 18), "team_change": True},
-    "BEA": {"team": "Haas", "tier": 4, "expected_range": (15, 20), "rookie": True},
+    # Haas
+    "OCO": {"team": "Haas", "team_change": True},
+    "BEA": {"team": "Haas", "rookie": True},
     
-    # Alpine - BACKMARKERS 🔻
-    "GAS": {"team": "Alpine", "tier": 5, "expected_range": (12, 20)},
-    "COL": {"team": "Alpine", "tier": 5, "expected_range": (14, 20), "team_change": True},
+    # Alpine
+    "GAS": {"team": "Alpine"},
+    "COL": {"team": "Alpine", "team_change": True},
     
-    # Sauber - BACKMARKERS 🔻
-    "HUL": {"team": "Sauber", "tier": 5, "expected_range": (14, 20)},
-    "BOR": {"team": "Sauber", "tier": 5, "expected_range": (16, 20), "rookie": True}
+    # Sauber
+    "HUL": {"team": "Sauber"},
+    "BOR": {"team": "Sauber", "rookie": True}
 }
 
 # 🔥 PENALIZACIONES SIMPLES
 PENALTIES = {
     "rookie": 2.5,           # Penalización para rookies
     "team_change": 1.5,      # Penalización por cambio de equipo
-    "adaptation_races": 8,   # Carreras para adaptarse completamente
+    "adaptation_races": 10,   # Carreras para adaptarse completamente
     "use_progressive": True  # Usar sistema de adaptación progresiva
 }
 
 # Listas simples
 ROOKIES_2025 = ["ANT", "BEA", "BOR", "HAD", "LAW"]
 RETIRED_DRIVERS = ["PER", "MAG", "DOO", "RIC", "BOT", "ZHO", "SAR"]
+
+
+
+VALID_TEAMS = ['Alpine', 'Aston Martin', 'Ferrari', 'Haas F1 Team', 'Kick Sauber', 
+                      'McLaren', 'Mercedes', 'Racing Bulls', 'Red Bull Racing', 'Williams']
+        
 
 # 🔥 CONFIGURACIÓN SIMPLE DE ADAPTACIÓN
 ADAPTATION_SYSTEM = {
@@ -102,4 +208,10 @@ ADAPTATION_SYSTEM = {
 # 🔥 FACTORES DE AJUSTE CONSOLIDADOS
 ADJUSTMENT_FACTORS = {
     "use_progressive_adaptation": PENALTIES["use_progressive"]
+}
+
+# ⚙️ CONFIGURACIÓN DE PREDICCIÓN DE CARRERA
+RACE_PREDICTION = {
+    # Peso de la grilla en la mezcla carrera = (1-β)*modelo + β*grilla
+    "grid_mix_beta": 0.35
 }
