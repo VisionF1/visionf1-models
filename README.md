@@ -4,42 +4,40 @@ Este proyecto es un sistema avanzado de predicción de posiciones de Fórmula 1 
 
 ## 🏆 Características Principales
 
-- **🚀 Feature Engineering Avanzado**: 12 features especializadas que mejoran la precisión hasta 98%
+- **🚀 Feature Engineering Avanzado**: múltiples features especializadas que mejoran la precisión hasta 98%
 - **Cross-Validation Robusto**: TimeSeriesSplit para datos temporales + detección automática de overfitting
 - **Selección Inteligente de Modelos**: Elige automáticamente el mejor modelo basado en métricas de rendimiento
 - **Predicciones Híbridas**: Combina ML histórico (25%) con configuración 2025 actualizada (75%)
-- **Sistema de Adaptación Progresiva**: Penalizaciones que disminuyen para rookies y cambios de equipo
+- **Sistema de Adaptación Progresiva**: Penalizaciones que disminuyen a lo largo del torneo para rookies y cambios de equipo
 - **Pipeline Mejorado**: EnhancedDataPreparer con validación completa de datos
 
 ## 🎯 Performance del Sistema
 
 ### Resultados Validados:
 - **Error reducido**: MSE de ~21 a ~0.7 (96.8% mejora)
-- **Precisión**: R² de 0.976-0.999 (casi perfecto)
+- **Precisión**: R² de 0.976-0.984
 - **Robustez**: 0% valores faltantes, 1,584 registros procesados
-- **Features**: 20 características vs 8 básicas (250% incremento)
+- **Features**: 17 características 
 
-## 🔧 Features Avanzadas Implementadas
+## 🔧 Features Seleccionadas
 
-### 🏁 Performance Relativo (3 features)
-- `quali_gap_to_pole`: Diferencia con pole position
-- `fp1_gap_to_fastest`: Gap en práctica libre 1
-- `team_quali_rank`: Ranking real de equipos (98.8% precisión)
-
-### 🚀 Momentum del Piloto (2 features)
-- `avg_position_last_3`: Posición promedio últimas carreras
-- `points_last_3`: Puntos acumulados recientes
-
-### 🌤️ Condiciones Meteorológicas (2 features)
-- `heat_index`: Estrés térmico (temperatura + humedad)
-- `weather_difficulty_index`: Índice compuesto de dificultad climática
-
-### 🏎️ Especialización y Consistencia (5 features)
-- `team_track_avg_position`: Performance histórica por circuito
-- `sector_consistency`: Consistencia en sectores
-- `fp1_to_quali_improvement`: Capacidad de desarrollo
-- `grid_to_race_change`: Habilidad de adelantamiento
-- `overtaking_ability`: Capacidad histórica de remontada
+- driver
+- team
+- race name
+- year
+- driver competitiveness
+- team competitiveness
+- point last 3
+- session air temp
+- session track temp
+- session humidity
+- session rainfall
+- heat index
+- weather difficulty index
+- circuit type
+- driver average points in rain
+- driver average points in dry
+- driver rain delta
 
 ## 📊 Modelos Soportados
 
