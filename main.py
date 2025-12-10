@@ -2,6 +2,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import pandas as pd
+import os
+import json
+import unicodedata
+import re
+from threading import Lock
 
 
 from app.core.pipeline import Pipeline
@@ -48,11 +53,61 @@ VALID_WEATHER_SCENARIOS = [
 app = FastAPI(
     title="F1 Prediction API",
     description="API para entrenar modelos y generar predicciones de F1",
-    version="1.0.0",
+    version="1.0.1",
 )
 
 # Instanciamos una sola vez el pipeline al arrancar la app
 pipeline = Pipeline(RACE_RANGE)
+
+# Directorios de cache en disco
+BASE_CACHE_DIR = "app/models_cache/api_cache"
+RACE_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "predict_race")
+QUALI_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "predict_quali")
+ALL_CACHE_DIR = os.path.join(BASE_CACHE_DIR, "predict_all")
+
+os.makedirs(RACE_CACHE_DIR, exist_ok=True)
+os.makedirs(QUALI_CACHE_DIR, exist_ok=True)
+os.makedirs(ALL_CACHE_DIR, exist_ok=True)
+
+cache_lock = Lock()
+
+
+def _slugify(text: str) -> str:
+    """Convierte texto en un slug seguro para nombre de archivo."""
+    norm = unicodedata.normalize("NFKD", text)
+    norm = norm.encode("ascii", "ignore").decode("ascii")
+    norm = norm.lower()
+    norm = re.sub(r"[^a-z0-9]+", "_", norm)
+    norm = norm.strip("_")
+    return norm or "unknown"
+
+
+def _cache_path(base_dir: str, race_name: str, scenario: str) -> str:
+    race_slug = _slugify(race_name)
+    scen_slug = _slugify(scenario)
+    filename = f"{race_slug}__{scen_slug}.json"
+    return os.path.join(base_dir, filename)
+
+
+def load_cache(base_dir: str, race_name: str, scenario: str) -> Optional[Dict[str, Any]]:
+    path = _cache_path(base_dir, race_name, scenario)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_cache(base_dir: str, race_name: str, scenario: str, payload: Dict[str, Any]) -> None:
+    path = _cache_path(base_dir, race_name, scenario)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
+
 
 
 class PredictParams(BaseModel):
@@ -111,17 +166,13 @@ def predict_race(params: PredictParams):
     """
     cfg = PREDICTION_CONFIG
 
-    # Valores actuales de config
     current_next_race = cfg["next_race"]
     current_scenario = cfg["active_scenario"]
 
-    # Tomar del body o del config
     race_name = params.race_name or current_next_race["race_name"]
     scenario = params.weather_scenario or current_scenario
 
-    # ---- VALIDACIONES ----
-
-    # Validar carrera
+    # Validaciones
     if params.race_name and race_name not in VALID_RACE_NAMES:
         raise HTTPException(
             status_code=400,
@@ -132,7 +183,6 @@ def predict_race(params: PredictParams):
             },
         )
 
-    # Validar escenario meteorológico
     if params.weather_scenario and scenario not in VALID_WEATHER_SCENARIOS:
         raise HTTPException(
             status_code=400,
@@ -143,36 +193,53 @@ def predict_race(params: PredictParams):
             },
         )
 
-    # ---- GUARDAR CONFIG ORIGINAL ----
+    # Clave de cache
+    key_race = (race_name, scenario)
+
+    # Intentar leer de cache en disco
+    with cache_lock:
+        cached = load_cache(RACE_CACHE_DIR, *key_race)
+
+    if cached is not None:
+        print("Usando cache disco para", key_race)
+        # Devolvemos lo que hay en disco + flag cached
+        return {
+            **cached,
+            "cached": True,
+        }
+
+    # No hay cache: ejecutar pipeline
     original_next_race = current_next_race.copy()
     original_active_scenario = cfg["active_scenario"]
     original_active_emoji = cfg.get("active_scenario_emoji")
 
     try:
-        # ---- OVERRIDE TEMPORAL ----
         cfg["next_race"]["race_name"] = race_name
         cfg["active_scenario"] = scenario
 
-        # Crear info con los valores actualizados
         info = get_next_race_info(
             race_name=race_name,
             weather_scenario=scenario,
         )
 
-        # ---- EJECUTAR PREDICCIÓN ----
         pipeline.predict_next_race_positions()
         results = build_race_full()
 
-        return {
+        response = {
             "status": "ok",
             "detail": "Predicción de posiciones de carrera generada",
+            "cached": False,
             "next_race": info,
             "race_predictions": results,
-
         }
 
+        # Guardar en disco (sin problema si falla)
+        with cache_lock:
+            save_cache(RACE_CACHE_DIR, *key_race, {k: v for k, v in response.items() if k != "cached"})
+
+        return response
+
     finally:
-        # ---- RESTAURAR CONFIG GLOBAL ----
         cfg["next_race"] = original_next_race
         cfg["active_scenario"] = original_active_scenario
         cfg["active_scenario_emoji"] = original_active_emoji
@@ -190,17 +257,12 @@ def predict_quali(params: PredictParams):
     """
     cfg = PREDICTION_CONFIG
 
-    # Valores actuales de config
     current_next_race = cfg["next_race"]
     current_scenario = cfg["active_scenario"]
 
-    # Tomar del body o del config
     race_name = params.race_name or current_next_race["race_name"]
     scenario = params.weather_scenario or current_scenario
 
-    # ---- VALIDACIONES ----
-
-    # Validar carrera
     if params.race_name and race_name not in VALID_RACE_NAMES:
         raise HTTPException(
             status_code=400,
@@ -211,7 +273,6 @@ def predict_quali(params: PredictParams):
             },
         )
 
-    # Validar escenario meteorológico
     if params.weather_scenario and scenario not in VALID_WEATHER_SCENARIOS:
         raise HTTPException(
             status_code=400,
@@ -222,36 +283,50 @@ def predict_quali(params: PredictParams):
             },
         )
 
-    # ---- GUARDAR CONFIG ORIGINAL ----
+    key_quali = (race_name, scenario)
+
+    # Cache en disco
+    with cache_lock:
+        cached = load_cache(QUALI_CACHE_DIR, *key_quali)
+
+    if cached is not None:
+        print("Usando cache disco para", key_quali)
+
+        return {
+            **cached,
+            "cached": True,
+        }
+
     original_next_race = current_next_race.copy()
     original_active_scenario = cfg["active_scenario"]
     original_active_emoji = cfg.get("active_scenario_emoji")
 
     try:
-        # ---- OVERRIDE TEMPORAL ----
         cfg["next_race"]["race_name"] = race_name
         cfg["active_scenario"] = scenario
 
-        # Crear info con los valores actualizados
         info = get_next_race_info(
             race_name=race_name,
             weather_scenario=scenario,
         )
 
-        # ---- EJECUTAR PREDICCIÓN ----
         pipeline.predict_quali_next_race()
-
         quali_top = build_quali_top(top=20)
 
-        return {
+        response = {
             "status": "ok",
             "detail": "Predicción de quali generada",
+            "cached": False,
             "next_race": info,
             "quali_predicts": quali_top,
         }
 
+        with cache_lock:
+            save_cache(QUALI_CACHE_DIR, *key_quali, {k: v for k, v in response.items() if k != "cached"})
+
+        return response
+
     finally:
-        # ---- RESTAURAR CONFIG GLOBAL ----
         cfg["next_race"] = original_next_race
         cfg["active_scenario"] = original_active_scenario
         cfg["active_scenario_emoji"] = original_active_emoji
@@ -308,7 +383,6 @@ def build_race_full() -> List[Dict[str, Any]]:
         rows.append(item)
 
     return rows
-
 @app.post("/predict-all")
 def predict_all(params: PredictParams):
     """
@@ -327,50 +401,57 @@ def predict_all(params: PredictParams):
     current_next_race = cfg["next_race"]
     current_scenario = cfg["active_scenario"]
 
-    # Valores pedidos por la request (o defaults del config)
     race_name = params.race_name or current_next_race["race_name"]
     scenario = params.weather_scenario or current_scenario
 
-    # Validar escenario meteorológico contra config
-    valid_scenarios = VALID_WEATHER_SCENARIOS
-    if scenario not in valid_scenarios:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "invalid_weather_scenario",
-                "message": "weather_scenario debe ser uno de los escenarios definidos en config",
-                "valid_weather_scenarios": sorted(valid_scenarios),
-            },
-        )
-
-    allowed_races = VALID_RACE_NAMES
-    if params.race_name and race_name not in allowed_races:
+    if params.race_name and race_name not in VALID_RACE_NAMES:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "invalid_race_name",
                 "message": "race_name debe estar entre las opciones definidas en config",
-                "valid_race_names": allowed_races,
+                "valid_race_names": VALID_RACE_NAMES,
             },
         )
 
-    # Guardar original para restaurar luego
+    if params.weather_scenario and scenario not in VALID_WEATHER_SCENARIOS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_weather_scenario",
+                "message": "weather_scenario debe ser uno de los escenarios definidos en config",
+                "valid_weather_scenarios": sorted(VALID_WEATHER_SCENARIOS),
+            },
+        )
+
+    key_all = (race_name, scenario)
+
+    # Intentar cache
+    with cache_lock:
+        cached = load_cache(ALL_CACHE_DIR, *key_all)
+
+    if cached is not None:
+        print("Usando cache disco para", key_all)
+        return {
+            **cached,
+            "cached": True,
+        }
+
     original_next_race = current_next_race.copy()
     original_active_scenario = cfg["active_scenario"]
     original_active_emoji = cfg.get("active_scenario_emoji")
 
     try:
-        # Override temporal de config para esta predicción
         cfg["next_race"]["race_name"] = race_name
         cfg["active_scenario"] = scenario
 
         info = get_next_race_info(
             race_name=race_name,
             weather_scenario=scenario,
-        )        
+        )
+
         artifacts = pipeline.predict_all()
 
-        race_top10: List[Dict[str, Any]] = []
         race_full: List[Dict[str, Any]] = []
         quali_top10: List[Dict[str, Any]] = []
         errors: Dict[str, str] = {}
@@ -385,7 +466,7 @@ def predict_all(params: PredictParams):
         except Exception as e:
             errors["quali_top10"] = str(e)
 
-        return {
+        response_core = {
             "status": "ok" if not errors else "partial_ok",
             "detail": "Predicción de quali + carrera ejecutadas",
             "next_race": info,
@@ -393,8 +474,18 @@ def predict_all(params: PredictParams):
             "race_predictions_full": race_full,
             "errors": errors or None,
         }
+
+        response = {
+            **response_core,
+            "cached": False,
+        }
+
+        with cache_lock:
+            save_cache(ALL_CACHE_DIR, *key_all, response_core)
+
+        return response
+
     finally:
-        # Restaurar config global
         cfg["next_race"] = original_next_race
         cfg["active_scenario"] = original_active_scenario
         cfg["active_scenario_emoji"] = original_active_emoji
