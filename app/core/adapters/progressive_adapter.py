@@ -55,7 +55,6 @@ class ProgressiveAdapter:
             status = "adapting"
             progress = min(100, int((current_race_number / adaptation_races) * 100))
 
-        print(f"   🔄 Estado de adaptación: {status} (Penalización: {penalty:.2f}, para driver: {driver})")
         return {
             "status": status,
             "penalty": penalty,
@@ -106,11 +105,7 @@ class ProgressiveAdapter:
             print("   ✅ Todos los pilotos ya están completamente adaptados")
             return
         
-        print(f"\n🔄 ADAPTACIONES APLICADAS - CARRERA #{current_race_number}")
-        print("-" * 86)
-        print(f"{'Piloto':<6} {'Antes':<8} {'Después':<10} {'Penaliz.':<10} {'% base':<8} {'Progreso':<9} {'Tipo'}")
-        print("-" * 86)
-        
+
         base_penalty = self.adaptation_config['change_types']['team_change']['base_penalty']
         for adaptation in adaptations:
             frac_pct = (adaptation['penalty'] / base_penalty * 100.0) if base_penalty else 0.0
@@ -123,11 +118,3 @@ class ProgressiveAdapter:
                 f"{adaptation['progress']:<8d}% "
                 f"{adaptation['description']}"
             )
-        print(f"\n💡 Las penalizaciones disminuyen automáticamente cada carrera")
-        print(
-            f"   Cambios de equipo: se consideran 'completamente adaptados' tras "
-            f"{self.adaptation_config['change_types']['team_change']['adaptation_races']} carreras,"
-        )
-        print(
-            f"   pero mantienen un mínimo del {self.min_penalty_fraction*100:.1f}% de la penalización base"
-        )

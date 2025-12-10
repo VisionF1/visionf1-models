@@ -138,12 +138,9 @@ class InferenceDatasetBuilder:
 
         if (has_year and has_rne and has_dre) and (race_code is not None):
             base_codes = _base_driver_codes()
-            self._log(f"🧭 base_driver_codes detectados: {len(base_codes)}")
             cur_try = X_all[(X_all["year"] == year) & (X_all["race_name_encoded"] == race_code)].copy()
-            self._log(f"🔎 (ideal) filtro year & race_name_encoded -> filas={len(cur_try)}")
             if base_codes:
                 cur_try = cur_try[cur_try["driver_encoded"].isin(base_codes)].copy()
-                self._log(f"🔎 + driver_encoded in base_set -> filas={len(cur_try)}")
             if len(cur_try) > len(base_df):
                 cur_try = (cur_try.reset_index(drop=True).drop_duplicates(subset=["driver_encoded"], keep="last"))
                 self._log(f"🔎 depurado a última por driver_encoded -> filas={len(cur_try)}")
@@ -152,13 +149,10 @@ class InferenceDatasetBuilder:
 
         if cur.empty and has_dre:
             base_codes = _base_driver_codes()
-            self._log(f"🧭 base_driver_codes detectados: {len(base_codes)}")
             last_per_driver = (X_all.reset_index(drop=True).drop_duplicates(subset=["driver_encoded"], keep="last"))
-            self._log(f"🔎 última por driver_encoded -> únicos={len(last_per_driver)}")
             cur_try = last_per_driver.copy()
             if base_codes:
                 cur_try = cur_try[cur_try["driver_encoded"].isin(base_codes)].copy()
-                self._log(f"🔎 + filtro base_set -> filas={len(cur_try)}")
             if (len(cur_try) == 0) and ("driver_encoded" in last_per_driver.columns):
                 try:
                     dec = self.mh.decode_series("driver", last_per_driver["driver_encoded"])
@@ -184,7 +178,6 @@ class InferenceDatasetBuilder:
                 if d not in have_set:
                     missing.append(d)
             if missing:
-                self._log(f"🧩 Híbrido: faltan {len(missing)} pilotos → completo con SOLO base_df")
                 X_only, _, _, _ = self.dp.prepare_enhanced_features(base_df.loc[missing].copy(), inference=True)
                 X_only = pd.DataFrame(X_only) if not isinstance(X_only, pd.DataFrame) else X_only
                 if "driver" not in X_only.columns:

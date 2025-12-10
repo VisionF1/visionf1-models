@@ -56,11 +56,9 @@ class SimplePositionPredictor:
                     if c not in X_with_meta.columns:
                         X_with_meta[c] = 0.0
             X_with_meta.to_csv(INFERENCE_OUT, index=False)
-            print(f"💾 Dataset de inferencia guardado: {INFERENCE_OUT} (shape={X_with_meta.shape})")
         except Exception as e:
-            print(f"⚠️ No se pudo guardar dataset de inferencia: {e}")
-
-        # Predicción
+            pass
+        
         if X is None or X.shape[0] == 0:
             self._log("⚠️ X vacío: uso predicción determinista como respaldo")
             drivers = base_df.index.tolist()

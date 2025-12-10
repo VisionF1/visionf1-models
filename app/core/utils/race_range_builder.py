@@ -11,11 +11,9 @@ class RaceRangeBuilder:
         max_races_per_year = config.get("max_races_per_year", 24)
         
         for year in years:
-            print(f"Detectando carreras para {year}...")
             races = self._get_races_for_year(year, max_races_per_year)
             race_range.extend(races)
         
-        print(f"Total carreras: {len(race_range)}")
         return race_range
     
     def _get_races_for_year(self, year, max_races):
@@ -23,13 +21,11 @@ class RaceRangeBuilder:
         try:
             schedule = fastf1.get_event_schedule(year)
             available_races = len(schedule)
-            print(f"  - {available_races} carreras en calendario de {year}")
             
             # Para años futuros, verificar cuáles han ocurrido
             actual_races = self._count_completed_races(year, available_races, max_races)
             races_to_get = min(actual_races, max_races)
 
-            print(f"  - {races_to_get} carreras completadas")
 
             return self._build_race_list(year, races_to_get, schedule)
             
@@ -42,7 +38,6 @@ class RaceRangeBuilder:
         if year < 2025:
             return available_races
         
-        print(f"   Verificando carreras completadas en {year}...")
         completed = 0
         
         for round_num in range(1, min(available_races + 1, max_races + 1)):

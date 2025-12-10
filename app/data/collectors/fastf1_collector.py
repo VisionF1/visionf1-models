@@ -69,20 +69,6 @@ class FastF1Collector:
                 else:
                     print(f"No se pudieron obtener datos para carrera {race['race_name']} ({race['year']})")
 
-        print(f"\nResumen de recolección:")
-        print(f"   Datos desde cache: {cached_data_used}")
-        if cached_data_names:
-            print("   Datos obtenidos desde cache:")
-            for race_name, years in cached_data_names.items():
-                print(f"      - {race_name}: {', '.join(map(str, years))}")
-
-        print(f"   Datos descargados: {fresh_data_collected}")
-        if fresh_data_collected_names:
-            print("   Datos descargados para:")
-            for race_name, years in fresh_data_collected_names.items():
-                print(f"      - {race_name}: {', '.join(map(str, years))}")
-
-        print(f"   Total carreras procesadas: {len(self.data)}")
 
     def _get_cache_filename(self, race):
         """Genera nombre de archivo de cache único por carrera"""
