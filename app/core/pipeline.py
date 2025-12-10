@@ -457,3 +457,21 @@ class Pipeline:
         rpred = self.predict_race_from_quali_grid(beta=None)
         artifacts["race_predictions"] = "app/models_cache/race_predictions_latest.csv"
         return artifacts
+
+    def predict_all(self) -> dict:
+        """predice quali y luego predice carrera usando grilla.
+        Devuelve rutas de archivos generados."""
+        artifacts = {}
+        artifacts["quali_model"] = "app/models_cache/quali_recent_model.pkl"
+
+        artifacts["race_models"] = "app/models_cache/"  # carpeta
+
+        # 3) Predecir quali de la próxima
+        qpred = self.predict_quali_next_race()
+        artifacts["quali_predictions"] = "app/models_cache/quali_predictions_latest.csv"
+
+        # 4) Predecir carrera usando grilla (real si hay; si no, predicha)
+        rpred = self.predict_race_from_quali_grid(beta=None)
+        artifacts["race_predictions"] = "app/models_cache/race_predictions_latest.csv"
+        return artifacts
+

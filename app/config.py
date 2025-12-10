@@ -52,9 +52,9 @@ RACE_RANGE = {
 PREDICTION_CONFIG = {
     "next_race": {
         "year": 2025,
-        "race_name": "Singapore Grand Prix", 
-        "circuit_name": "Marina Bay Street Circuit",
-        "race_number": 18  # Número de carrera en la temporada 2025
+        "race_name": "Abu Dhabi Grand Prix", 
+        "circuit_name": "Yas Marina Circuit",
+        "race_number": 24  # Número de carrera en la temporada 2025
     },
     "use_historical_data": True,
     
@@ -214,4 +214,13 @@ ADJUSTMENT_FACTORS = {
 RACE_PREDICTION = {
     # Peso de la grilla en la mezcla carrera = (1-β)*modelo + β*grilla
     "grid_mix_beta": 0.35
+}
+
+
+SCENARIO_EMOJIS = {
+    "dry": "☀️",
+    "hot": "🔥",
+    "wet": "🌧️",
+    "storm": "⛈️",
+    "cold": "❄️",
 }
